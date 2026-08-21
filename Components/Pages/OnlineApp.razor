@@ -1,0 +1,207 @@
+@page "/online-app"
+@inject SkySoftAppService OnlineApi
+@inject TaxiTripStoreService TripStore
+@inject AppSessionService Session
+
+<PageTitle>DashChecker - Online App</PageTitle>
+
+<div class="page-shell">
+    <section class="page-header">
+        <div>
+            <div class="eyebrow">DASHCHECKER • DATA.SKYSOFT.VN</div>
+            <h1>Online App</h1>
+            <p>Lấy xe đang online và cuốc khách trực tiếp từ API App theo đúng khu vực đang đăng nhập.</p>
+        </div>
+        @if (Session.Area is not null)
+        {
+            <div class="area-pill">@Session.Area.AreaCode · @Session.Area.AreaName</div>
+        }
+    </section>
+
+    @if (!Session.IsLoggedIn || Session.Area is null)
+    {
+        <section class="data-card">
+            <div class="empty-state login-required">
+                <div class="empty-icon">◉</div>
+                <strong>Chưa xác định khu vực</strong>
+                <span>Vào Cuốc xe và đăng nhập trước. Online App sẽ tự dùng API của khu vực BL/VL tương ứng.</span>
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="data-card">
+            <div class="data-toolbar">
+                <div>
+                    <h2>@Session.Area.AreaName · Online App</h2>
+                    <p>Cuốc khách dùng kỳ vận hành cố định <strong>05:00 hôm qua → 05:00 hôm nay</strong>.</p>
+                </div>
+                <div class="toolbar-actions">
+                    <button class="btn secondary" @onclick="LoadOnlineAsync" disabled="@_busy">
+                        @if (_loadingOnline)
+                        {
+                            <span class="spinner dark"></span><span>Đang lấy xe</span>
+                        }
+                        else
+                        {
+                            <span>◉ Xe Online</span>
+                        }
+                    </button>
+                    <button class="btn primary" @onclick="LoadTripsAsync" disabled="@_busy">
+                        @if (_loadingTrips)
+                        {
+                            <span class="spinner"></span><span>Đang lấy cuốc</span>
+                        }
+                        else
+                        {
+                            <span>↻ Lấy thông tin cuốc khách</span>
+                        }
+                    </button>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_message))
+            {
+                <div class="inline-message success data-message">@_message</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="inline-message error data-message">@_error</div>
+            }
+
+            <div class="data-tabs">
+                <button class="data-tab @(_tab == "trips" ? "active" : "")" @onclick='() => _tab = "trips"'>
+                    Cuốc khách <span class="tab-count">@(_tripResult?.Trips.Count.ToString("N0") ?? "0")</span>
+                </button>
+                <button class="data-tab @(_tab == "online" ? "active" : "")" @onclick='() => _tab = "online"'>
+                    Xe Online <span class="tab-count">@_vehicles.Count.ToString("N0")</span>
+                </button>
+            </div>
+
+            @if (_tab == "trips")
+            {
+                @if (_tripResult is null)
+                {
+                    <div class="empty-state compact-empty">
+                        <strong>Chưa lấy cuốc App</strong>
+                        <span>Bấm “Lấy thông tin cuốc khách”. Kết quả sẽ đồng thời ghép App User/Số tài vào Current Cuốc xe nếu Current đã tồn tại.</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="snapshot-strip online-snapshot">
+                        <div><span>Kỳ dữ liệu</span><strong>@_tripResult.FromAt.ToString("dd/MM/yyyy HH:mm") → @_tripResult.ToAt.ToString("dd/MM/yyyy HH:mm")</strong></div>
+                        <div><span>Cuốc đạt điều kiện</span><strong>@_tripResult.Trips.Count.ToString("N0")</strong></div>
+                        <div><span>Xe Online</span><strong>@_tripResult.Vehicles.Count.ToString("N0")</strong></div>
+                    </div>
+
+                    <div class="table-frame">
+                        <table class="data-grid online-trip-grid">
+                            <thead><tr>
+                                <th>Số tài</th><th>Biển số</th><th>App User</th><th>Bắt đầu</th><th>Kết thúc</th>
+                                <th>KM khách</th><th>KM rỗng</th><th>Tổng KM</th><th>Chờ (phút)</th>
+                                <th>Cước</th><th>Thực thu</th><th>Trip ID</th><th class="place-col">Điểm đầu</th><th class="place-col">Điểm cuối</th>
+                            </tr></thead>
+                            <tbody>
+                            @foreach (var trip in _tripResult.Trips)
+                            {
+                                <tr>
+                                    <td><span class="trip-code">@trip.VehicleNo</span></td>
+                                    <td><span class="plate-badge">@trip.PlateNo</span></td>
+                                    <td><strong class="app-user">@trip.UserName</strong></td>
+                                    <td>@trip.PickupDate.ToString("dd/MM/yyyy HH:mm:ss")</td>
+                                    <td>@(trip.DropOffDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "")</td>
+                                    <td class="number-col">@trip.Km.ToString("N2")</td>
+                                    <td class="number-col empty-km">@trip.EmptyKm.ToString("N2")</td>
+                                    <td class="number-col total-km">@trip.TotalKm.ToString("N2")</td>
+                                    <td class="number-col">@trip.WaitTimeMinutes.ToString("N2")</td>
+                                    <td class="money-col">@FormatMoney(trip.Charge)</td>
+                                    <td class="money-col">@FormatMoney(trip.RealCharge)</td>
+                                    <td class="trip-id-cell" title="@trip.TripId">@trip.TripId</td>
+                                    <td class="place-col" title="@trip.FromPlaceName">@trip.FromPlaceName</td>
+                                    <td class="place-col" title="@trip.ToPlaceName">@trip.ToPlaceName</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+            else
+            {
+                @if (_vehicles.Count == 0)
+                {
+                    <div class="empty-state compact-empty"><strong>Chưa có dữ liệu xe Online</strong><span>Bấm “Xe Online” để gọi endpoint online_taxi.</span></div>
+                }
+                else
+                {
+                    <div class="table-frame">
+                        <table class="data-grid online-vehicle-grid">
+                            <thead><tr><th>Số tài</th><th>Biển số</th><th>Vehicle Code</th><th>Vehicle ID</th><th>GPS Date</th><th>Update Date</th></tr></thead>
+                            <tbody>
+                            @foreach (var vehicle in _vehicles)
+                            {
+                                <tr>
+                                    <td><span class="trip-code">@vehicle.VehicleNo</span></td>
+                                    <td><span class="plate-badge">@vehicle.PlateNo</span></td>
+                                    <td>@vehicle.VehicleCode</td><td>@vehicle.VehicleId</td>
+                                    <td>@(vehicle.GpsDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "")</td>
+                                    <td>@(vehicle.UpdateDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "")</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private string _tab = "trips";
+    private bool _loadingOnline;
+    private bool _loadingTrips;
+    private bool _busy => _loadingOnline || _loadingTrips;
+    private string? _message;
+    private string? _error;
+    private IReadOnlyList<OnlineVehicleInfo> _vehicles = [];
+    private OnlineTripResult? _tripResult;
+
+    private async Task LoadOnlineAsync()
+    {
+        if (Session.Area is null) return;
+        _message = null; _error = null;
+        try
+        {
+            _loadingOnline = true;
+            _vehicles = await OnlineApi.GetOnlineVehiclesAsync(Session.Area.AreaCode);
+            _tab = "online";
+            _message = $"Đã lấy {_vehicles.Count:N0} xe Online của {Session.Area.AreaName}.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _loadingOnline = false; }
+    }
+
+    private async Task LoadTripsAsync()
+    {
+        if (Session.Area is null) return;
+        _message = null; _error = null;
+        try
+        {
+            _loadingTrips = true;
+            _tripResult = await OnlineApi.GetCurrentOperationalTripsAsync(Session.Area.AreaCode);
+            _vehicles = _tripResult.Vehicles;
+            var applied = await TripStore.ApplyOnlineAppInfoAsync(
+                Session.Area, _tripResult.Trips, OnlineApi.MatchToleranceMinutes);
+            _tab = "trips";
+            _message = applied.CurrentTrips > 0
+                ? $"Đã lấy {_tripResult.Trips.Count:N0} cuốc App; ghép {applied.MatchedTrips:N0}/{applied.CurrentTrips:N0} cuốc vào Current SkySoft. Current được đánh dấu chưa chốt Kho."
+                : $"Đã lấy {_tripResult.Trips.Count:N0} cuốc App. Chưa có Current Cuốc xe hôm nay để ghép.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _loadingTrips = false; }
+    }
+
+    private static string FormatMoney(decimal value) => $"{value:N0} đ";
+}

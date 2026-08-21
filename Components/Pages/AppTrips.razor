@@ -1,0 +1,210 @@
+@page "/app-trips"
+@inject SkySoftAppService OnlineApi
+@inject OnlineAppStoreService Store
+@inject TaxiTripStoreService TripStore
+@inject AppSessionService Session
+@implements IDisposable
+
+<PageTitle>DashChecker - Báo cáo cuốc khách</PageTitle>
+
+<div class="page-shell">
+    <section class="page-header compact-page-header">
+        <div>
+            <div class="eyebrow">VẬN HÀNH • DATA.SKYSOFT.VN</div>
+            <h1>Báo cáo cuốc khách</h1>
+        </div>
+        @if (Session.Area is not null) { <div class="area-pill">@Session.Area.AreaCode · @Session.Area.AreaName</div> }
+    </section>
+
+    @if (!Session.IsLoggedIn || Session.Area is null)
+    {
+        <section class="data-card"><div class="empty-state login-required"><strong>Chưa xác định khu vực</strong><span>Đăng nhập tài khoản khu vực ở thanh điều hướng bên trái.</span></div></section>
+    }
+    else
+    {
+        <section class="data-card">
+            <div class="data-toolbar">
+                <div><h2>@Session.Area.AreaName · Báo cáo cuốc khách</h2></div>
+                <div class="toolbar-actions">
+                    <button class="btn primary" @onclick="RefreshAsync" disabled="@_busy">
+                        @if (_updating) { <span class="spinner"></span><span>Đang lấy báo cáo</span> } else { <span>↻ Cập nhật Current</span> }
+                    </button>
+                    @if ((_current?.TotalRows ?? 0) > 0) { <button class="btn save" @onclick="() => _confirmSave = true" disabled="@_busy"><span>✓ Chốt & Lưu Kho</span></button> }
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_message)) { <div class="inline-message success data-message">@_message</div> }
+            @if (!string.IsNullOrWhiteSpace(_error)) { <div class="inline-message error data-message">@_error</div> }
+
+            <div class="flow-note compact-flow-note">Ghi nhận cuốc xe 3 ngày gần nhất từ 19,49 km trở lên</div>
+
+            <div class="data-tabs">
+                <button class="data-tab @(_tab == "current" ? "active" : "")" @onclick='() => SwitchTabAsync("current")'>Current <span class="tab-count">@(_current?.TotalRows ?? 0)</span></button>
+                <button class="data-tab @(_tab == "archive" ? "active" : "")" @onclick='() => SwitchTabAsync("archive")'>Kho lưu trữ <span class="tab-count">@(_archive?.TotalRows ?? 0)</span></button>
+            </div>
+
+            @if (_loading)
+            {
+                <div class="empty-state"><span class="spinner dark"></span><span>Đang đọc dữ liệu local...</span></div>
+            }
+            else
+            {
+                var data = _tab == "current" ? _current : _archive;
+                if (data is null || data.TotalRows == 0)
+                {
+                    <div class="empty-state"><strong>@(_tab == "current" ? "Current đang trống" : "Kho chưa có dữ liệu")</strong></div>
+                }
+                else
+                {
+                    <div class="snapshot-strip app-trip-snapshot">
+                        <div><span>Kỳ dữ liệu</span><strong>@data.FromAt.ToString("dd/MM/yyyy HH:mm") → @data.ToAt.ToString("dd/MM/yyyy HH:mm")</strong></div>
+                        <div><span>Thời gian tạo</span><strong>@(data.CreatedAt?.ToString("dd/MM/yyyy HH:mm:ss") ?? "—")</strong></div>
+                        <div><span>Số cuốc</span><strong>@data.TotalRows.ToString("N0")</strong></div>
+                    </div>
+
+                    <div class="grid-tools">
+                        <div class="search-box"><span class="search-icon">⌕</span><input @bind="_search" placeholder="Tìm số tài, biển số, App User, Trip ID, điểm đầu/cuối..." /><button class="btn secondary compact" @onclick="SearchAsync">Tìm</button></div>
+                        <div class="table-options"><ColumnPicker Columns="@_columns" Changed="RefreshColumns" /><div class="result-count"><strong>@data.TotalRows.ToString("N0")</strong> cuốc</div></div>
+                    </div>
+
+                    <div class="table-frame">
+                        <table class="data-grid online-trip-grid">
+                            <thead><tr>
+                                @if (Show("GeneratedId")) { <th>ID</th> }
+                                @if (Show("VehicleNo")) { <th>Số tài</th> }
+                                @if (Show("PlateNo")) { <th>Biển số</th> }
+                                @if (Show("UserName")) { <th>App User</th> }
+                                @if (Show("Pickup")) { <th>Bắt đầu</th> }
+                                @if (Show("DropOff")) { <th>Kết thúc</th> }
+                                @if (Show("Km")) { <th>KM khách</th> }
+                                @if (Show("EmptyKm")) { <th>KM rỗng</th> }
+                                @if (Show("TotalKm")) { <th>Tổng KM</th> }
+                                @if (Show("WaitTime")) { <th>Chờ (phút)</th> }
+                                @if (Show("WaitCharge")) { <th>Phí chờ</th> }
+                                @if (Show("Charge")) { <th>Cước</th> }
+                                @if (Show("RealCharge")) { <th>Thực thu</th> }
+                                @if (Show("TripId")) { <th>Trip ID</th> }
+                                @if (Show("VehicleDateKey")) { <th>Key xe-ngày</th> }
+                                @if (Show("FromPlace")) { <th class="place-col">Điểm đầu</th> }
+                                @if (Show("ToPlace")) { <th class="place-col">Điểm cuối</th> }
+                                @if (_tab == "archive" && Show("SavedAt")) { <th>SavedAt</th> }
+                                @if (Show("CreatedAt")) { <th>Thời gian tạo</th> }
+                            </tr></thead>
+                            <tbody>
+                            @foreach (var row in data.Rows)
+                            {
+                                var trip = row.Trip;
+                                <tr>
+                                    @if (Show("GeneratedId")) { <td><span class="trip-code">@trip.GeneratedId</span></td> }
+                                    @if (Show("VehicleNo")) { <td><span class="trip-code">@trip.VehicleNo</span></td> }
+                                    @if (Show("PlateNo")) { <td><span class="plate-badge">@trip.PlateNo</span></td> }
+                                    @if (Show("UserName")) { <td><strong class="app-user">@trip.UserName</strong></td> }
+                                    @if (Show("Pickup")) { <td>@trip.PickupDate.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                                    @if (Show("DropOff")) { <td>@(trip.DropOffDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "")</td> }
+                                    @if (Show("Km")) { <td class="number-col">@trip.Km.ToString("N2")</td> }
+                                    @if (Show("EmptyKm")) { <td class="number-col empty-km">@trip.EmptyKm.ToString("N2")</td> }
+                                    @if (Show("TotalKm")) { <td class="number-col total-km">@trip.TotalKm.ToString("N2")</td> }
+                                    @if (Show("WaitTime")) { <td class="number-col">@trip.WaitTimeMinutes.ToString("N2")</td> }
+                                    @if (Show("WaitCharge")) { <td class="money-col">@FormatMoney(trip.WaitCharge)</td> }
+                                    @if (Show("Charge")) { <td class="money-col">@FormatMoney(trip.Charge)</td> }
+                                    @if (Show("RealCharge")) { <td class="money-col">@FormatMoney(trip.RealCharge)</td> }
+                                    @if (Show("TripId")) { <td class="trip-id-cell" title="@trip.TripId">@trip.TripId</td> }
+                                    @if (Show("VehicleDateKey")) { <td>@trip.VehicleDateKey</td> }
+                                    @if (Show("FromPlace")) { <td class="place-col" title="@trip.FromPlaceName">@trip.FromPlaceName</td> }
+                                    @if (Show("ToPlace")) { <td class="place-col" title="@trip.ToPlaceName">@trip.ToPlaceName</td> }
+                                    @if (_tab == "archive" && Show("SavedAt")) { <td>@(row.SavedAt?.ToString("dd/MM/yyyy HH:mm") ?? "")</td> }
+                                    @if (Show("CreatedAt")) { <td class="date-cell">@row.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pager"><span>Trang @data.Page / @data.TotalPages · @data.TotalRows.ToString("N0") cuốc</span><div><button class="btn secondary compact" disabled="@(data.Page <= 1)" @onclick="PreviousAsync">← Trước</button><button class="btn secondary compact" disabled="@(data.Page >= data.TotalPages)" @onclick="NextAsync">Sau →</button></div></div>
+                }
+            }
+        </section>
+    }
+</div>
+
+@if (_confirmSave && Session.Area is not null)
+{
+    <div class="modal-backdrop" @onclick="() => _confirmSave = false">
+        <div class="confirm-dialog" @onclick:stopPropagation="true">
+            <div class="confirm-icon">✓</div><h3>Chốt Báo cáo cuốc khách?</h3>
+            <p>Kho <strong>@Session.Area.AreaName</strong> của ngày <strong>@(_current?.CreatedAt?.ToString("dd/MM/yyyy") ?? "")</strong> sẽ bị thay bằng Current hiện tại.</p>
+            <div class="confirm-actions"><button class="btn secondary" @onclick="() => _confirmSave = false">Hủy</button><button class="btn save" @onclick="SaveAsync">Chốt & Lưu</button></div>
+        </div>
+    </div>
+}
+
+@code {
+    private string _tab = "current";
+    private string _search = "";
+    private bool _loading, _updating, _saving, _confirmSave;
+    private bool _busy => _loading || _updating || _saving;
+    private string? _message, _error;
+    private AppTripSnapshot? _current, _archive;
+    private readonly List<ColumnOption> _columns =
+    [
+        new("GeneratedId", "ID"), new("VehicleNo", "Số tài"), new("PlateNo", "Biển số"), new("UserName", "App User"),
+        new("Pickup", "Bắt đầu"), new("DropOff", "Kết thúc"), new("Km", "KM khách"), new("EmptyKm", "KM rỗng"),
+        new("TotalKm", "Tổng KM"), new("WaitTime", "Chờ (phút)"), new("WaitCharge", "Phí chờ"), new("Charge", "Cước"),
+        new("RealCharge", "Thực thu"), new("TripId", "Trip ID"), new("VehicleDateKey", "Key xe-ngày"),
+        new("FromPlace", "Điểm đầu"), new("ToPlace", "Điểm cuối"), new("SavedAt", "SavedAt"), new("CreatedAt", "Thời gian tạo")
+    ];
+    private bool Show(string key) => _columns.First(x => x.Key == key).Visible;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        if (Session.Area is not null) await LoadAsync();
+    }
+    private void OnSessionChanged() => _ = InvokeAsync(async () => { _current = null; _archive = null; if (Session.Area is not null) await LoadAsync(); StateHasChanged(); });
+
+    private async Task RefreshAsync()
+    {
+        if (Session.Area is null) return;
+        _error = _message = null; _updating = true;
+        try
+        {
+            var result = await OnlineApi.GetThreeDayFlowTripsAsync(Session.Area.AreaCode);
+            await Store.ReplaceAppTripCurrentAsync(Session.Area, result);
+            var applied = await TripStore.ApplyOnlineAppInfoAsync(Session.Area, result.Trips, OnlineApi.MatchToleranceMinutes);
+            _tab = "current"; _search = "";
+            await LoadAsync();
+            _message = $"Đã cập nhật {result.Trips.Count:N0} cuốc vào Current; ghép {applied.MatchedTrips:N0}/{applied.CurrentTrips:N0} cuốc với Báo cáo đồng hồ.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _updating = false; }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (Session.Area is null) return;
+        _saving = true; _confirmSave = false; _error = _message = null;
+        try { var count = await Store.SaveAppTripCurrentToArchiveAsync(Session.Area); await LoadAsync(); _message = $"Đã chốt {count:N0} cuốc vào Kho."; }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task SwitchTabAsync(string tab) { _tab = tab; _search = ""; await LoadAsync(); }
+    private async Task SearchAsync() { await LoadAsync(1); }
+    private async Task PreviousAsync() { var d = _tab == "current" ? _current : _archive; if (d is not null && d.Page > 1) await LoadAsync(d.Page - 1); }
+    private async Task NextAsync() { var d = _tab == "current" ? _current : _archive; if (d is not null && d.Page < d.TotalPages) await LoadAsync(d.Page + 1); }
+    private Task RefreshColumns() { StateHasChanged(); return Task.CompletedTask; }
+
+    private async Task LoadAsync(int page = 1)
+    {
+        if (Session.Area is null) return;
+        _loading = true;
+        try
+        {
+            if (_tab == "current") _current = await Store.GetAppTripCurrentAsync(Session.Area, page, 100, _search);
+            else _archive = await Store.GetAppTripArchiveAsync(Session.Area, page, 100, _search);
+        }
+        finally { _loading = false; }
+    }
+
+    private static string FormatMoney(decimal value) => $"{value:N0} đ";
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+}

@@ -1,0 +1,44 @@
+@page "/app-management"
+@inject AppSessionService Session
+
+<PageTitle>DashChecker - Quản lý App</PageTitle>
+
+<div class="page-shell app-management-home">
+    <section class="page-header compact-page-header">
+        <div>
+            <div class="eyebrow">DASHCHECKER • QUẢN LÝ APP</div>
+            <h1>Quản lý App</h1>
+            <p>Chọn bảng dữ liệu cần thao tác. Mỗi phần có Current, chỉnh sửa kiểu bảng tính và Kho lưu trữ riêng theo khu vực.</p>
+        </div>
+        @if (Session.Area is not null)
+        {
+            <div class="area-pill">@Session.Area.AreaCode · @Session.Area.AreaName</div>
+        }
+    </section>
+
+    <section class="app-module-grid">
+        @foreach (var module in AppModuleDefinition.All.Values)
+        {
+            <NavLink class="app-module-card" href="@($"/app-management/{module.Key}")">
+                <div class="app-module-icon">@ModuleIcon(module.Key)</div>
+                <div>
+                    <strong>@module.Title</strong>
+                    <span>@module.Columns.Count cột dữ liệu · Current + Kho</span>
+                </div>
+                <b>→</b>
+            </NavLink>
+        }
+    </section>
+</div>
+
+@code {
+    private static string ModuleIcon(string key) => key switch
+    {
+        "vnpay" => "VN",
+        "customer-promo" => "%",
+        "customer-app" => "KH",
+        "xanh-sm" => "SM",
+        "contracts" => "HĐ",
+        _ => "▦"
+    };
+}

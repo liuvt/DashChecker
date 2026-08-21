@@ -1,0 +1,184 @@
+@page "/online-vehicles"
+@inject SkySoftAppService OnlineApi
+@inject OnlineAppStoreService Store
+@inject AppSessionService Session
+@implements IDisposable
+
+<PageTitle>DashChecker - GPS Online</PageTitle>
+
+<div class="page-shell">
+    <section class="page-header compact-page-header">
+        <div>
+            <div class="eyebrow">VẬN HÀNH • DATA.SKYSOFT.VN</div>
+            <h1>GPS Online</h1>
+            <p>Kiểm tra xe có nhận được tín hiệu GPS từ <strong>online_taxi</strong> hay không.</p>
+        </div>
+        @if (Session.Area is not null) { <div class="area-pill">@Session.Area.AreaCode · @Session.Area.AreaName</div> }
+    </section>
+
+    @if (!Session.IsLoggedIn || Session.Area is null)
+    {
+        <section class="data-card"><div class="empty-state login-required"><strong>Chưa xác định khu vực</strong><span>Đăng nhập tài khoản khu vực ở thanh điều hướng bên trái.</span></div></section>
+    }
+    else
+    {
+        <section class="data-card">
+            <div class="data-toolbar">
+                <div><h2>@Session.Area.AreaName · GPS Online</h2><p>API: <strong>online_taxi</strong></p></div>
+                <div class="toolbar-actions">
+                    <button class="btn primary" @onclick="RefreshAsync" disabled="@_busy">
+                        @if (_updating) { <span class="spinner"></span><span>Đang cập nhật</span> } else { <span>↻ Cập nhật Current</span> }
+                    </button>
+                    @if ((_current?.TotalRows ?? 0) > 0) { <button class="btn save" @onclick="() => _confirmSave = true" disabled="@_busy"><span>✓ Chốt & Lưu Kho</span></button> }
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_message)) { <div class="inline-message success data-message">@_message</div> }
+            @if (!string.IsNullOrWhiteSpace(_error)) { <div class="inline-message error data-message">@_error</div> }
+
+            <div class="data-tabs">
+                <button class="data-tab @(_tab == "current" ? "active" : "")" @onclick='() => SwitchTabAsync("current")'>Current <span class="tab-count">@(_current?.TotalRows ?? 0)</span></button>
+                <button class="data-tab @(_tab == "archive" ? "active" : "")" @onclick='() => SwitchTabAsync("archive")'>Kho lưu trữ <span class="tab-count">@(_archive?.TotalRows ?? 0)</span></button>
+            </div>
+
+            @if (_loading)
+            {
+                <div class="empty-state"><span class="spinner dark"></span><span>Đang đọc dữ liệu local...</span></div>
+            }
+            else
+            {
+                var data = _tab == "current" ? _current : _archive;
+                if (data is null || data.TotalRows == 0)
+                {
+                    <div class="empty-state"><strong>@(_tab == "current" ? "Current đang trống" : "Kho chưa có dữ liệu")</strong><span>@(_tab == "current" ? "Bấm Cập nhật Current để kiểm tra GPS." : "Chốt Current để lưu vào Kho.")</span></div>
+                }
+                else
+                {
+                    <div class="snapshot-strip online-snapshot">
+                        <div><span>Thời gian tạo</span><strong>@(data.CreatedAt?.ToString("dd/MM/yyyy HH:mm:ss") ?? "—")</strong></div>
+                        <div><span>Số xe</span><strong>@data.TotalRows.ToString("N0")</strong></div>
+                        <div><span>Trạng thái</span><strong class="@(data.SavedAt.HasValue ? "saved-text" : "pending-text")">@(data.SavedAt.HasValue ? $"Đã chốt {data.SavedAt:dd/MM HH:mm:ss}" : "Chưa chốt Kho")</strong></div>
+                    </div>
+
+                    <div class="grid-tools">
+                        <div class="search-box"><span class="search-icon">⌕</span><input @bind="_search" placeholder="Tìm số tài, biển số, vehicle code/id..." /><button class="btn secondary compact" @onclick="SearchAsync">Tìm</button></div>
+                        <div class="table-options"><ColumnPicker Columns="@_columns" Changed="RefreshColumns" /><div class="result-count"><strong>@data.TotalRows.ToString("N0")</strong> xe</div></div>
+                    </div>
+
+                    <div class="table-frame">
+                        <table class="data-grid online-vehicle-grid">
+                            <thead><tr>
+                                @if (Show("VehicleNo")) { <th>Số tài</th> }
+                                @if (Show("PlateNo")) { <th>Biển số</th> }
+                                @if (Show("VehicleCode")) { <th>Vehicle Code</th> }
+                                @if (Show("VehicleId")) { <th>Vehicle ID</th> }
+                                @if (Show("Signal")) { <th>Tín hiệu GPS</th> }
+                                @if (Show("GpsDate")) { <th>GPS Date</th> }
+                                @if (Show("UpdateDate")) { <th>Update Date</th> }
+                                @if (_tab == "archive" && Show("SavedAt")) { <th>SavedAt</th> }
+                                @if (Show("CreatedAt")) { <th>Thời gian tạo</th> }
+                            </tr></thead>
+                            <tbody>
+                            @foreach (var row in data.Rows)
+                            {
+                                <tr>
+                                    @if (Show("VehicleNo")) { <td><span class="trip-code">@row.Vehicle.VehicleNo</span></td> }
+                                    @if (Show("PlateNo")) { <td><span class="plate-badge">@row.Vehicle.PlateNo</span></td> }
+                                    @if (Show("VehicleCode")) { <td>@row.Vehicle.VehicleCode</td> }
+                                    @if (Show("VehicleId")) { <td>@row.Vehicle.VehicleId</td> }
+                                    @if (Show("Signal")) { <td><span class="gps-signal @(row.Vehicle.GpsDate.HasValue ? "on" : "off")"><span class="status-dot"></span>@(row.Vehicle.GpsDate.HasValue ? "Có tín hiệu" : "Không tín hiệu")</span></td> }
+                                    @if (Show("GpsDate")) { <td>@(row.Vehicle.GpsDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "—")</td> }
+                                    @if (Show("UpdateDate")) { <td>@(row.Vehicle.UpdateDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "—")</td> }
+                                    @if (_tab == "archive" && Show("SavedAt")) { <td>@(row.SavedAt?.ToString("dd/MM/yyyy HH:mm") ?? "")</td> }
+                                    @if (Show("CreatedAt")) { <td class="date-cell">@row.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pager"><span>Trang @data.Page / @data.TotalPages · @data.TotalRows.ToString("N0") xe</span><div><button class="btn secondary compact" disabled="@(data.Page <= 1)" @onclick="PreviousAsync">← Trước</button><button class="btn secondary compact" disabled="@(data.Page >= data.TotalPages)" @onclick="NextAsync">Sau →</button></div></div>
+                }
+            }
+        </section>
+    }
+</div>
+
+@if (_confirmSave && Session.Area is not null)
+{
+    <div class="modal-backdrop" @onclick="() => _confirmSave = false">
+        <div class="confirm-dialog" @onclick:stopPropagation="true">
+            <div class="confirm-icon">✓</div><h3>Chốt GPS Online vào Kho?</h3>
+            <p>Kho <strong>@Session.Area.AreaName</strong> của ngày <strong>@(_current?.CreatedAt?.ToString("dd/MM/yyyy") ?? "")</strong> sẽ bị thay bằng Current hiện tại.</p>
+            <div class="confirm-actions"><button class="btn secondary" @onclick="() => _confirmSave = false">Hủy</button><button class="btn save" @onclick="SaveAsync">Chốt & Lưu</button></div>
+        </div>
+    </div>
+}
+
+@code {
+    private string _tab = "current";
+    private string _search = "";
+    private bool _loading, _updating, _saving, _confirmSave;
+    private bool _busy => _loading || _updating || _saving;
+    private string? _message, _error;
+    private OnlineVehicleSnapshot? _current, _archive;
+    private readonly List<ColumnOption> _columns =
+    [
+        new("VehicleNo", "Số tài"), new("PlateNo", "Biển số"), new("VehicleCode", "Vehicle Code"),
+        new("VehicleId", "Vehicle ID"), new("Signal", "Tín hiệu GPS"), new("GpsDate", "GPS Date"),
+        new("UpdateDate", "Update Date"), new("SavedAt", "SavedAt"), new("CreatedAt", "Thời gian tạo")
+    ];
+    private bool Show(string key) => _columns.First(x => x.Key == key).Visible;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        if (Session.Area is not null) await LoadAsync();
+    }
+
+    private void OnSessionChanged() => _ = InvokeAsync(async () => { _current = null; _archive = null; if (Session.Area is not null) await LoadAsync(); StateHasChanged(); });
+
+    private async Task RefreshAsync()
+    {
+        if (Session.Area is null) return;
+        _error = _message = null; _updating = true;
+        try
+        {
+            var rows = await OnlineApi.GetOnlineVehiclesAsync(Session.Area.AreaCode);
+            await Store.ReplaceOnlineVehicleCurrentAsync(Session.Area, rows);
+            _tab = "current"; _search = "";
+            await LoadAsync();
+            _message = $"Đã cập nhật {rows.Count:N0} xe GPS vào Current. Kho chưa thay đổi.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _updating = false; }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (Session.Area is null) return;
+        _saving = true; _confirmSave = false; _error = _message = null;
+        try { var count = await Store.SaveOnlineVehicleCurrentToArchiveAsync(Session.Area); await LoadAsync(); _message = $"Đã chốt {count:N0} xe GPS vào Kho."; }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task SwitchTabAsync(string tab) { _tab = tab; _search = ""; await LoadAsync(); }
+    private async Task SearchAsync() { await LoadAsync(1); }
+    private async Task PreviousAsync() { var d = _tab == "current" ? _current : _archive; if (d is not null && d.Page > 1) await LoadAsync(d.Page - 1); }
+    private async Task NextAsync() { var d = _tab == "current" ? _current : _archive; if (d is not null && d.Page < d.TotalPages) await LoadAsync(d.Page + 1); }
+    private Task RefreshColumns() { StateHasChanged(); return Task.CompletedTask; }
+
+    private async Task LoadAsync(int page = 1)
+    {
+        if (Session.Area is null) return;
+        _loading = true;
+        try
+        {
+            if (_tab == "current") _current = await Store.GetOnlineVehicleCurrentAsync(Session.Area, page, 100, _search);
+            else _archive = await Store.GetOnlineVehicleArchiveAsync(Session.Area, page, 100, _search);
+        }
+        finally { _loading = false; }
+    }
+
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+}

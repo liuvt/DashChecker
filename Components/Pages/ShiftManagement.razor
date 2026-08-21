@@ -1,0 +1,514 @@
+@page "/shift-management"
+@inject AppSessionService Session
+@inject GoogleShiftService GoogleShift
+@inject ShiftStoreService ShiftStore
+@inject TripDriverMatcherService DriverMatcher
+@implements IDisposable
+
+<PageTitle>DashChecker - Quản lý lên xuống ca</PageTitle>
+
+<div class="page-shell">
+    <section class="page-header">
+        <div>
+            <div class="eyebrow">DASHCHECKER • GOOGLE SHEETS</div>
+            <h1>Quản lý danh sách lên xuống ca</h1>
+            <p>Current là vùng thao tác: thêm, sửa, xóa tại đây. Chỉ khi bấm Lưu mới replace dữ liệu Kho theo ngày CreatedAt.</p>
+        </div>
+        @if (Session.Area is not null)
+        {
+            <div class="area-pill">@Session.Area.AreaCode · @Session.Area.AreaName</div>
+        }
+    </section>
+
+    @if (!Session.IsLoggedIn || Session.Area is null)
+    {
+        <section class="data-card">
+            <div class="empty-state login-required">
+                <div class="empty-icon">⇄</div>
+                <strong>Chưa xác định khu vực</strong>
+                <span>Đăng nhập tài khoản khu vực ở thanh điều hướng bên trái.</span>
+                <NavLink class="btn primary" href="/">Đến Báo cáo đồng hồ</NavLink>
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="data-card">
+            <div class="data-toolbar">
+                <div>
+                    <h2>@Session.Area.AreaName · Danh sách lên xuống ca</h2>
+                    <p>Ghép tài xế với cuốc theo Số tài/Biển số và <strong>mốc lên ca hiệu lực</strong>.</p>
+                </div>
+                <div class="toolbar-actions">
+                    <button class="btn update" @onclick="UpdateAsync" disabled="@HasPendingRowEdit">
+                        @if (_updating)
+                        {
+                            <span class="spinner"></span><span>Đang cập nhật</span>
+                        }
+                        else
+                        {
+                            <span class="refresh-icon">↻</span><span>Cập nhật Current</span>
+                        }
+                    </button>
+                    @if (_current is not null)
+                    {
+                        <button class="btn save" @onclick="SaveArchiveAsync" disabled="@HasPendingRowEdit">
+                            @if (_saving)
+                            {
+                                <span class="spinner"></span><span>Đang lưu</span>
+                            }
+                            else
+                            {
+                                <span>✓</span><span>Lưu vào Kho</span>
+                            }
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_message))
+            {
+                <div class="inline-message success data-message">@_message</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="inline-message error data-message">@_error</div>
+            }
+
+            <div class="data-tabs">
+                <button class="data-tab @(_activeTab == "current" ? "active" : "")" @onclick='() => SwitchTabAsync("current")'>
+                    Current
+                    <span class="tab-count">@(_current?.TotalRows.ToString("N0") ?? "0")</span>
+                </button>
+                <button class="data-tab @(_activeTab == "archive" ? "active" : "")" @onclick='() => SwitchTabAsync("archive")'>
+                    Kho lưu trữ
+                    <span class="tab-count">@(_archive?.TotalRows.ToString("N0") ?? "0")</span>
+                </button>
+            </div>
+
+            @if (_loading)
+            {
+                <div class="empty-state"><span class="spinner dark"></span><span>Đang đọc dữ liệu ca...</span></div>
+            }
+            else if (_activeTab == "current")
+            {
+                @if (_current is not null)
+                {
+                    <div class="snapshot-strip shift-snapshot">
+                        <div><span>Ngày nguồn</span><strong>@_current.SourceDate.ToString("dd/MM/yyyy")</strong></div>
+                        <div><span>CreatedAt</span><strong>@_current.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</strong></div>
+                        <div><span>Trạng thái Kho</span><strong class="@(_current.IsSaved ? "saved-text" : "pending-text")">@(_current.IsSaved ? $"Đã lưu {_current.SavedAt:HH:mm:ss}" : "Current có thay đổi / chưa lưu")</strong></div>
+                    </div>
+
+                    <div class="kpi-grid shift-kpis">
+                        <div class="kpi-card"><span>Tổng dòng</span><strong>@_current.Summary.TotalRows.ToString("N0")</strong><small>Current hiện tại</small></div>
+                        <div class="kpi-card"><span>Lên ca</span><strong>@_current.Summary.LenCa.ToString("N0")</strong><small>mốc phân tài</small></div>
+                        <div class="kpi-card"><span>Xuống ca</span><strong>@_current.Summary.XuongCa.ToString("N0")</strong><small>không phân cuốc</small></div>
+                        <div class="kpi-card"><span>Số xe</span><strong>@_current.Summary.SoXe.ToString("N0")</strong><small>biển số khác nhau</small></div>
+                        <div class="kpi-card"><span>Tài xế</span><strong>@_current.Summary.TaiXe.ToString("N0")</strong><small>tài lên ca</small></div>
+                        <div class="kpi-card warning"><span>Xe nhiều tài</span><strong>@_current.Summary.XeNhieuTai.ToString("N0")</strong><small>phân theo mốc giờ</small></div>
+                    </div>
+                }
+
+                @CurrentTools()
+                @ShiftCurrentTable()
+
+                @if (_current is not null)
+                {
+                    <div class="pager">
+                        <span>Trang <strong>@_current.Page</strong> / <strong>@_current.TotalPages</strong></span>
+                        <div>
+                            <button class="btn secondary compact" @onclick="CurrentPreviousAsync" disabled="@(_current.Page <= 1 || HasPendingRowEdit)">← Trước</button>
+                            <button class="btn secondary compact" @onclick="CurrentNextAsync" disabled="@(_current.Page >= _current.TotalPages || HasPendingRowEdit)">Sau →</button>
+                        </div>
+                    </div>
+                }
+            }
+            else
+            {
+                @if (_archive is null || _archive.TotalRows == 0)
+                {
+                    <div class="empty-state">
+                        <div class="empty-icon">▣</div>
+                        <strong>Kho lên/xuống ca chưa có dữ liệu</strong>
+                        <span>Hoàn chỉnh Current rồi bấm Lưu vào Kho.</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="grid-tools archive-tools">
+                        <div class="search-box">
+                            <span class="search-icon">⌕</span>
+                            <input @bind="_archiveSearch" placeholder="Tìm Kho: số tài, biển số, tài xế, SĐT, trạng thái..." />
+                            <button class="btn secondary compact" @onclick="SearchArchiveAsync">Tìm</button>
+                            @if (!string.IsNullOrWhiteSpace(_archive.Search))
+                            {
+                                <button class="btn ghost compact" @onclick="ClearArchiveSearchAsync">Xóa lọc</button>
+                            }
+                        </div>
+                        <div class="table-options"><ColumnPicker Columns="@_columns" Changed="RefreshColumns" /><div class="result-count"><strong>@_archive.TotalRows.ToString("N0")</strong> dòng đã lưu</div></div>
+                    </div>
+                    @ShiftArchiveTable()
+                    <div class="pager">
+                        <span>Trang <strong>@_archive.Page</strong> / <strong>@_archive.TotalPages</strong></span>
+                        <div>
+                            <button class="btn secondary compact" @onclick="ArchivePreviousAsync" disabled="@(_archive.Page <= 1)">← Trước</button>
+                            <button class="btn secondary compact" @onclick="ArchiveNextAsync" disabled="@(_archive.Page >= _archive.TotalPages)">Sau →</button>
+                        </div>
+                    </div>
+                }
+            }
+        </section>
+    }
+</div>
+
+@if (_deleteTarget is not null)
+{
+    <div class="confirm-backdrop" role="presentation" @onclick="CancelDeleteDialog">
+        <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title" @onclick:stopPropagation="true">
+            <div class="confirm-icon danger">!</div>
+            <div class="confirm-content">
+                <h3 id="delete-dialog-title">Xác nhận xóa dữ liệu?</h3>
+                <p>Dòng này sẽ bị xóa khỏi <strong>Current</strong>. Dữ liệu trong Kho chưa thay đổi cho đến khi bạn bấm <strong>Lưu vào Kho</strong>.</p>
+
+                <div class="confirm-details">
+                    <div><span>Số tài</span><strong>@_deleteTarget.SoTai</strong></div>
+                    <div><span>Biển số</span><strong>@_deleteTarget.BienKiemSoat</strong></div>
+                    <div><span>Tài xế</span><strong>@(string.IsNullOrWhiteSpace(_deleteTarget.DriverName) ? "—" : _deleteTarget.DriverName)</strong></div>
+                    <div><span>Mốc ca</span><strong>@_deleteTarget.SourceAt.ToString("dd/MM/yyyy HH:mm:ss")</strong></div>
+                </div>
+
+                <div class="confirm-actions">
+                    <button class="btn secondary" @onclick="CancelDeleteDialog" disabled="@_rowBusy">Hủy</button>
+                    <button class="btn danger" @onclick="ConfirmDeleteAsync" disabled="@_rowBusy">
+                        @if (_rowBusy)
+                        {
+                            <span class="spinner"></span><span>Đang xóa</span>
+                        }
+                        else
+                        {
+                            <span>Xóa dữ liệu</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private const int PageSize = 100;
+    private bool _updating;
+    private bool _saving;
+    private bool _loading;
+    private bool _rowBusy;
+    private bool _adding;
+    private long? _editId;
+    private ShiftListItem? _deleteTarget;
+    private ShiftCurrentEditModel _rowEditor = ShiftCurrentEditModel.CreateNew(DateTime.Today.AddDays(-1));
+    private string _activeTab = "current";
+    private string _currentSearch = string.Empty;
+    private string _archiveSearch = string.Empty;
+    private string? _message;
+    private string? _error;
+    private CurrentShiftPage? _current;
+    private ArchiveShiftPage? _archive;
+
+    private readonly List<ColumnOption> _columns =
+    [
+        new("SourceDate", "Ngày"), new("SoTai", "Số tài"), new("SoCho", "Số chỗ"), new("BienSo", "Biển số"),
+        new("Driver", "Tài xế / MSNV"), new("Phone", "SĐT"), new("Status", "Trạng thái"), new("Duplicate", "Trùng xe"),
+        new("Partner", "Loại hình hợp tác"), new("Business", "Hình thức KD"), new("Reason", "Lý do xuống ca"),
+        new("Note", "Ghi chú"), new("Time", "Mốc thời gian"), new("Salary", "Hình thức lương"),
+        new("CreatedAt", "CreatedAt"), new("SavedAt", "SavedAt")
+    ];
+
+    private string? ColStyle(string key) => _columns.First(x => x.Key == key).Visible ? null : "display:none";
+    private Task RefreshColumns() { StateHasChanged(); return Task.CompletedTask; }
+
+    private bool HasPendingRowEdit => _updating || _saving || _rowBusy || _adding || _editId.HasValue || _deleteTarget is not null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        await LoadAsync();
+    }
+
+    private void OnSessionChanged() => _ = InvokeAsync(async () =>
+    {
+        _current = null; _archive = null;
+        if (Session.Area is not null) await LoadAsync();
+        StateHasChanged();
+    });
+
+    private async Task LoadAsync()
+    {
+        if (Session.Area is null) return;
+        try
+        {
+            _loading = true;
+            _current = await ShiftStore.GetCurrentPageAsync(Session.Area, 1, PageSize, _currentSearch);
+            _archive = await ShiftStore.GetArchivePageAsync(Session.Area, 1, PageSize, _archiveSearch);
+        }
+        finally { _loading = false; }
+    }
+
+    private async Task UpdateAsync()
+    {
+        if (Session.Area is null || HasPendingRowEdit) return;
+        _message = null; _error = null;
+        try
+        {
+            _updating = true;
+            var report = await GoogleShift.FetchCurrentAsync(Session.Area);
+            await ShiftStore.ReplaceCurrentAsync(Session.Area, report);
+            var matched = await DriverMatcher.RefreshCurrentTripAssignmentsAsync(Session.Area);
+            _currentSearch = string.Empty;
+            _current = await ShiftStore.GetCurrentPageAsync(Session.Area, 1, PageSize);
+            _activeTab = "current";
+            _message = $"Đã cập nhật Current ca ngày {report.SourceDate:dd/MM/yyyy}: {report.Rows.Count:N0} dòng; ghép lại {matched:N0} cuốc theo mốc lên ca.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _updating = false; }
+    }
+
+    private void BeginAdd()
+    {
+        if (Session.Area is null || HasPendingRowEdit) return;
+        foreach (var column in _columns) column.Visible = true;
+        var sourceDate = _current?.SourceDate ?? VietnamClock.Now.Date.AddDays(-1);
+        _rowEditor = ShiftCurrentEditModel.CreateNew(sourceDate);
+        _editId = null;
+        _adding = true;
+        _activeTab = "current";
+        _message = null;
+        _error = null;
+    }
+
+    private void BeginEdit(ShiftListItem row)
+    {
+        if (HasPendingRowEdit) return;
+        _rowEditor = ShiftCurrentEditModel.From(row);
+        _editId = row.Id;
+        _adding = false;
+        _message = null;
+        _error = null;
+    }
+
+    private void CancelRowEdit()
+    {
+        _adding = false;
+        _editId = null;
+        _rowEditor = ShiftCurrentEditModel.CreateNew(_current?.SourceDate ?? VietnamClock.Now.Date.AddDays(-1));
+    }
+
+    private async Task SaveRowAsync()
+    {
+        if (Session.Area is null || (!_adding && !_editId.HasValue)) return;
+        _message = null; _error = null;
+        try
+        {
+            _rowBusy = true;
+            if (_adding)
+            {
+                await ShiftStore.AddCurrentRowAsync(Session.Area, _rowEditor);
+                _message = "Đã thêm dòng Current. Kho chưa thay đổi.";
+            }
+            else
+            {
+                await ShiftStore.UpdateCurrentRowAsync(Session.Area, _editId!.Value, _rowEditor);
+                _message = "Đã cập nhật dòng Current. Kho chưa thay đổi.";
+            }
+
+            _adding = false;
+            _editId = null;
+            await DriverMatcher.RefreshCurrentTripAssignmentsAsync(Session.Area);
+            _current = await ShiftStore.GetCurrentPageAsync(Session.Area, _current?.Page ?? 1, PageSize, _currentSearch);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _rowBusy = false; }
+    }
+
+    private void RequestDeleteRow(ShiftListItem row)
+    {
+        if (Session.Area is null || HasPendingRowEdit) return;
+        _deleteTarget = row;
+        _message = null;
+        _error = null;
+    }
+
+    private void CancelDeleteDialog()
+    {
+        if (_rowBusy) return;
+        _deleteTarget = null;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (Session.Area is null || _deleteTarget is null || _rowBusy) return;
+
+        var target = _deleteTarget;
+        _message = null;
+        _error = null;
+
+        try
+        {
+            _rowBusy = true;
+            await ShiftStore.DeleteCurrentRowAsync(Session.Area, target.Id);
+            await DriverMatcher.RefreshCurrentTripAssignmentsAsync(Session.Area);
+            _current = await ShiftStore.GetCurrentPageAsync(Session.Area, _current?.Page ?? 1, PageSize, _currentSearch);
+            _deleteTarget = null;
+            _message = $"Đã xóa {target.SoTai} - {target.BienKiemSoat} khỏi Current. Kho chưa thay đổi.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _rowBusy = false;
+        }
+    }
+
+    private async Task SaveArchiveAsync()
+    {
+        if (Session.Area is null || _current is null || HasPendingRowEdit) return;
+        _message = null; _error = null;
+        try
+        {
+            _saving = true;
+            var createdDay = _current.CreatedAt.Date;
+            var count = await ShiftStore.SaveCurrentToArchiveAsync(Session.Area);
+            _current = await ShiftStore.GetCurrentPageAsync(Session.Area, _current.Page, PageSize, _currentSearch);
+            _archive = await ShiftStore.GetArchivePageAsync(Session.Area, 1, PageSize, _archiveSearch);
+            _message = $"Đã xóa bản Kho cũ ngày CreatedAt {createdDay:dd/MM/yyyy} và lưu lại toàn bộ {count:N0} dòng Current.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        if (HasPendingRowEdit) return;
+        _activeTab = tab;
+        if (Session.Area is null) return;
+        if (tab == "current") _current = await ShiftStore.GetCurrentPageAsync(Session.Area, _current?.Page ?? 1, PageSize, _currentSearch);
+        else _archive = await ShiftStore.GetArchivePageAsync(Session.Area, _archive?.Page ?? 1, PageSize, _archiveSearch);
+    }
+
+    private RenderFragment CurrentTools() => @<div class="grid-tools">
+        <div class="search-box">
+            <span class="search-icon">⌕</span>
+            <input @bind="_currentSearch" placeholder="Tìm Current: số tài, biển số, tài xế, SĐT, trạng thái..." disabled="@HasPendingRowEdit" />
+            <button class="btn secondary compact" @onclick="SearchCurrentAsync" disabled="@HasPendingRowEdit">Tìm</button>
+            @if (!string.IsNullOrWhiteSpace(_current?.Search))
+            {
+                <button class="btn ghost compact" @onclick="ClearCurrentSearchAsync" disabled="@HasPendingRowEdit">Xóa lọc</button>
+            }
+        </div>
+        <div class="current-grid-actions table-options">
+            <ColumnPicker Columns="@_columns" Changed="RefreshColumns" />
+            <button class="btn primary compact add-current-btn" @onclick="BeginAdd" disabled="@(_updating || _saving || _rowBusy || _adding || _editId.HasValue)">＋ Thêm mới</button>
+            <div class="result-count"><strong>@(_current?.TotalRows.ToString("N0") ?? "0")</strong> dòng Current</div>
+        </div>
+    </div>;
+
+    private RenderFragment ShiftCurrentTable() => @<div class="table-frame">
+        <table class="data-grid shift-grid editable-shift-grid">
+            <thead><tr>
+                <th class="control-col">Thao tác</th>
+                <th style='@ColStyle("SourceDate")'>Ngày</th><th style='@ColStyle("SoTai")'>Số tài</th><th style='@ColStyle("SoCho")'>Số chỗ</th><th style='@ColStyle("BienSo")'>Biển số</th>
+                <th style='@ColStyle("Driver")' class="driver-col">Tài xế / MSNV</th><th style='@ColStyle("Phone")'>SĐT</th><th style='@ColStyle("Status")'>Trạng thái</th><th style='@ColStyle("Duplicate")'>Trùng xe</th>
+                <th style='@ColStyle("Partner")'>Loại hình hợp tác</th><th style='@ColStyle("Business")'>Hình thức KD</th><th style='@ColStyle("Reason")'>Lý do xuống ca</th><th style='@ColStyle("Note")' class="place-col">Ghi chú</th>
+                <th style='@ColStyle("Time")'>Mốc thời gian</th><th style='@ColStyle("Salary")'>Hình thức lương</th>
+            </tr></thead>
+            <tbody>
+            @if (_adding) { @EditorRow("Thêm") }
+            @if (_current is not null)
+            {
+                @foreach (var row in _current.Rows)
+                {
+                    @if (_editId == row.Id) { @EditorRow("Sửa") }
+                    else
+                    {
+                        <tr>
+                            <td class="control-col"><div class="row-actions view-actions"><button class="mini-btn edit" @onclick="() => BeginEdit(row)" disabled="@HasPendingRowEdit">Sửa</button><button class="mini-btn delete" @onclick="() => RequestDeleteRow(row)" disabled="@HasPendingRowEdit">Xóa</button></div></td>
+                            <td style='@ColStyle("SourceDate")'>@row.SourceDate.ToString("dd/MM/yyyy")</td>
+                            <td style='@ColStyle("SoTai")'><span class="trip-code">@row.SoTai</span></td><td style='@ColStyle("SoCho")'>@row.SoCho</td><td style='@ColStyle("BienSo")'><span class="plate-badge">@row.BienKiemSoat</span></td>
+                            <td style='@ColStyle("Driver")' class="driver-col"><div class="driver-main">@(string.IsNullOrWhiteSpace(row.DriverName) ? "—" : row.DriverName)</div><div class="driver-meta">@row.EmployeeCode</div></td>
+                            <td style='@ColStyle("Phone")'>@row.DriverPhone</td><td style='@ColStyle("Status")'><span class="shift-status @(row.IsActive ? "up" : "down")">@row.TrangThaiLenXuongCa</span></td>
+                            <td style='@ColStyle("Duplicate")'>@DuplicateBadge(row.DriverCountForVehicle, row.RowCountForSoTai)</td>
+                            <td style='@ColStyle("Partner")'>@row.LoaiHinhHopTac</td><td style='@ColStyle("Business")'>@row.HinhThucKinhDoanh</td><td style='@ColStyle("Reason")' title="@row.LyDoXuongCa">@row.LyDoXuongCa</td>
+                            <td style='@ColStyle("Note")' class="place-col" title="@row.GhiChu">@row.GhiChu</td>
+                            <td style='@ColStyle("Time")'><strong>@row.SourceTime.ToString(@"hh\:mm\:ss")</strong><div class="driver-meta">@row.SourceAt.ToString("dd/MM HH:mm:ss")</div></td>
+                            <td style='@ColStyle("Salary")'>@row.HinhThucLuong</td>
+                        </tr>
+                    }
+                }
+            }
+            </tbody>
+        </table>
+        @if (_current is null && !_adding) { <div class="empty-state compact-empty"><strong>Chưa có Current</strong><span>Bấm Cập nhật Current hoặc Thêm mới thủ công.</span></div> }
+    </div>;
+
+    private RenderFragment EditorRow(string mode) => @<tr class="editing-row">
+        <td class="control-col"><span class="row-mode @(mode == "Thêm" ? "add" : "edit")">@mode</span><div class="row-actions"><button class="mini-btn save" @onclick="SaveRowAsync" disabled="@_rowBusy">Lưu</button><button class="mini-btn cancel" @onclick="CancelRowEdit" disabled="@_rowBusy">Hủy</button></div></td>
+        <td style='@ColStyle("SourceDate")'><input class="grid-input date-input" type="date" @bind="_rowEditor.SourceDate" /></td>
+        <td style='@ColStyle("SoTai")'><input class="grid-input short-input" @bind="_rowEditor.SoTai" /></td>
+        <td style='@ColStyle("SoCho")'><input class="grid-input tiny-input" @bind="_rowEditor.SoCho" /></td>
+        <td style='@ColStyle("BienSo")'><input class="grid-input plate-input" @bind="_rowEditor.BienKiemSoat" /></td>
+        <td style='@ColStyle("Driver")'><input class="grid-input driver-input" @bind="_rowEditor.HoTenMsnv" placeholder="HỌ TÊN - BL0001" /></td>
+        <td style='@ColStyle("Phone")'><input class="grid-input phone-input" @bind="_rowEditor.DriverPhone" /></td>
+        <td style='@ColStyle("Status")'><select class="grid-input status-input" @bind="_rowEditor.TrangThaiLenXuongCa"><option>Lên ca</option><option>Xuống ca</option></select></td>
+        <td style='@ColStyle("Duplicate")'><span class="match-empty">tự tính</span></td>
+        <td style='@ColStyle("Partner")'><input class="grid-input wide-input" @bind="_rowEditor.LoaiHinhHopTac" /></td>
+        <td style='@ColStyle("Business")'><input class="grid-input wide-input" @bind="_rowEditor.HinhThucKinhDoanh" /></td>
+        <td style='@ColStyle("Reason")'><input class="grid-input wide-input" @bind="_rowEditor.LyDoXuongCa" /></td>
+        <td style='@ColStyle("Note")'><input class="grid-input note-input" @bind="_rowEditor.GhiChu" /></td>
+        <td style='@ColStyle("Time")'><input class="grid-input time-input" type="time" step="1" @bind="_rowEditor.SourceTime" /><div class="driver-meta">Mốc phân cuốc</div></td>
+        <td style='@ColStyle("Salary")'><input class="grid-input wide-input" @bind="_rowEditor.HinhThucLuong" /></td>
+    </tr>;
+
+    private RenderFragment ShiftArchiveTable() => @<div class="table-frame">
+        <table class="data-grid shift-grid archive-grid">
+            <thead><tr>
+                <th style='@ColStyle("CreatedAt")'>CreatedAt</th><th style='@ColStyle("SavedAt")'>SavedAt</th><th style='@ColStyle("SourceDate")'>Ngày</th><th style='@ColStyle("SoTai")'>Số tài</th><th style='@ColStyle("SoCho")'>Số chỗ</th><th style='@ColStyle("BienSo")'>Biển số</th>
+                <th style='@ColStyle("Driver")' class="driver-col">Tài xế / MSNV</th><th style='@ColStyle("Phone")'>SĐT</th><th style='@ColStyle("Status")'>Trạng thái</th><th style='@ColStyle("Duplicate")'>Trùng xe</th>
+                <th style='@ColStyle("Partner")'>Loại hình hợp tác</th><th style='@ColStyle("Business")'>Hình thức KD</th><th style='@ColStyle("Reason")'>Lý do xuống ca</th><th style='@ColStyle("Note")' class="place-col">Ghi chú</th><th style='@ColStyle("Time")'>Mốc thời gian</th><th style='@ColStyle("Salary")'>Hình thức lương</th>
+            </tr></thead>
+            <tbody>
+            @foreach (var row in _archive!.Rows)
+            {
+                <tr>
+                    <td style='@ColStyle("CreatedAt")' class="archive-date">@row.CreatedAt.ToString("dd/MM/yyyy HH:mm")</td><td style='@ColStyle("SavedAt")'>@row.SavedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                    <td style='@ColStyle("SourceDate")'>@row.SourceDate.ToString("dd/MM/yyyy")</td>
+                    <td style='@ColStyle("SoTai")'><span class="trip-code">@row.SoTai</span></td><td style='@ColStyle("SoCho")'>@row.SoCho</td><td style='@ColStyle("BienSo")'><span class="plate-badge">@row.BienKiemSoat</span></td>
+                    <td style='@ColStyle("Driver")' class="driver-col"><div class="driver-main">@(string.IsNullOrWhiteSpace(row.DriverName) ? "—" : row.DriverName)</div><div class="driver-meta">@row.EmployeeCode</div></td>
+                    <td style='@ColStyle("Phone")'>@row.DriverPhone</td><td style='@ColStyle("Status")'><span class="shift-status @(row.IsActive ? "up" : "down")">@row.TrangThaiLenXuongCa</span></td>
+                    <td style='@ColStyle("Duplicate")'>@DuplicateBadge(row.DriverCountForVehicle, row.RowCountForSoTai)</td>
+                    <td style='@ColStyle("Partner")'>@row.LoaiHinhHopTac</td><td style='@ColStyle("Business")'>@row.HinhThucKinhDoanh</td><td style='@ColStyle("Reason")' title="@row.LyDoXuongCa">@row.LyDoXuongCa</td>
+                    <td style='@ColStyle("Note")' class="place-col" title="@row.GhiChu">@row.GhiChu</td>
+                    <td style='@ColStyle("Time")'><strong>@row.SourceTime.ToString(@"hh\:mm\:ss")</strong><div class="driver-meta">@row.SourceAt.ToString("dd/MM HH:mm:ss")</div></td><td style='@ColStyle("Salary")'>@row.HinhThucLuong</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>;
+
+    private RenderFragment DuplicateBadge(int driverCount, int soTaiCount) => @<div class="duplicate-stack">
+        @if (driverCount > 1) { <span class="multi-driver-badge">@driverCount tài / xe</span> }
+        @if (soTaiCount > 1) { <span class="duplicate-badge">@soTaiCount dòng / số tài</span> }
+        @if (driverCount <= 1 && soTaiCount <= 1) { <span class="match-empty">—</span> }
+    </div>;
+
+    private async Task SearchCurrentAsync() { if (Session.Area is not null) _current = await ShiftStore.GetCurrentPageAsync(Session.Area, 1, PageSize, _currentSearch); }
+    private async Task ClearCurrentSearchAsync() { _currentSearch = string.Empty; await SearchCurrentAsync(); }
+    private async Task SearchArchiveAsync() { if (Session.Area is not null) _archive = await ShiftStore.GetArchivePageAsync(Session.Area, 1, PageSize, _archiveSearch); }
+    private async Task ClearArchiveSearchAsync() { _archiveSearch = string.Empty; await SearchArchiveAsync(); }
+    private async Task CurrentPreviousAsync() { if (Session.Area is not null && _current is not null && _current.Page > 1 && !HasPendingRowEdit) _current = await ShiftStore.GetCurrentPageAsync(Session.Area, _current.Page - 1, PageSize, _currentSearch); }
+    private async Task CurrentNextAsync() { if (Session.Area is not null && _current is not null && _current.Page < _current.TotalPages && !HasPendingRowEdit) _current = await ShiftStore.GetCurrentPageAsync(Session.Area, _current.Page + 1, PageSize, _currentSearch); }
+    private async Task ArchivePreviousAsync() { if (Session.Area is not null && _archive is not null && _archive.Page > 1) _archive = await ShiftStore.GetArchivePageAsync(Session.Area, _archive.Page - 1, PageSize, _archiveSearch); }
+    private async Task ArchiveNextAsync() { if (Session.Area is not null && _archive is not null && _archive.Page < _archive.TotalPages) _archive = await ShiftStore.GetArchivePageAsync(Session.Area, _archive.Page + 1, PageSize, _archiveSearch); }
+
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+}

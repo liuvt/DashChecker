@@ -1,0 +1,514 @@
+@page "/app-management/{ModuleKey}"
+@inject AppSessionService Session
+@inject AppManagementStoreService Store
+@implements IDisposable
+
+<PageTitle>DashChecker - @Definition.Title</PageTitle>
+
+<div class="page-shell app-management-page">
+    <section class="page-header compact-page-header">
+        <div>
+            <div class="eyebrow">DASHCHECKER • QUẢN LÝ APP</div>
+            <h1>@Definition.Title</h1>
+            <p>Current là vùng chỉnh sửa trực tiếp. Thêm / Sửa / Xóa tại đây; bấm <strong>Lưu vào Kho</strong> để chốt riêng dữ liệu của @Definition.Title.</p>
+        </div>
+        @if (Session.Area is not null)
+        {
+            <div class="area-pill">@Session.Area.AreaCode · @Session.Area.AreaName</div>
+        }
+    </section>
+
+    @if (!Session.IsLoggedIn || Session.Area is null)
+    {
+        <section class="data-card">
+            <div class="empty-state login-required">
+                <div class="empty-icon">▦</div>
+                <strong>Chưa xác định khu vực</strong>
+                <span>Đăng nhập tài khoản khu vực ở thanh điều hướng bên trái để quản lý dữ liệu App.</span>
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="data-card">
+            <div class="data-toolbar">
+                <div>
+                    <h2>@Session.Area.AreaName · @Definition.Title</h2>
+                    <p>Mỗi bảng App có Current và Kho độc lập theo khu vực.</p>
+                </div>
+                <div class="toolbar-actions">
+                    @if (_activeTab == "current")
+                    {
+                        <button class="btn primary" @onclick="BeginAdd" disabled="@HasPendingEdit">
+                            <span>＋</span><span>Thêm dòng</span>
+                        </button>
+                        <button class="btn save" @onclick="() => _confirmArchive = true" disabled="@HasPendingEdit">
+                            <span>✓</span><span>Lưu vào Kho</span>
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_message))
+            {
+                <div class="inline-message success data-message">@_message</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="inline-message error data-message">@_error</div>
+            }
+
+            <div class="data-tabs">
+                <button class="data-tab @(_activeTab == "current" ? "active" : "")" @onclick='() => SwitchTabAsync("current")' disabled="@HasPendingEdit">
+                    Current <span class="tab-count">@(_current?.TotalRows.ToString("N0") ?? "0")</span>
+                </button>
+                <button class="data-tab @(_activeTab == "archive" ? "active" : "")" @onclick='() => SwitchTabAsync("archive")' disabled="@HasPendingEdit">
+                    Kho lưu trữ <span class="tab-count">@(_archive?.TotalRows.ToString("N0") ?? "0")</span>
+                </button>
+            </div>
+
+            <div class="grid-tools app-management-tools">
+                <div class="search-box">
+                    <span class="search-icon">⌕</span>
+                    <input @bind="_search" placeholder="Tìm trong dữ liệu @Definition.ShortTitle..." disabled="@HasPendingEdit" />
+                    <button class="btn secondary compact" @onclick="SearchAsync" disabled="@HasPendingEdit">Tìm</button>
+                    @if (!string.IsNullOrWhiteSpace(_search))
+                    {
+                        <button class="btn ghost compact" @onclick="ClearSearchAsync" disabled="@HasPendingEdit">Xóa lọc</button>
+                    }
+                </div>
+                <div class="table-options">
+                    <ColumnPicker Columns="@_columns" Changed="RefreshColumns" />
+                    <div class="result-count"><strong>@ActiveTotalRows.ToString("N0")</strong> dòng</div>
+                </div>
+            </div>
+
+            @if (_loading)
+            {
+                <div class="empty-state"><span class="spinner dark"></span><span>Đang đọc dữ liệu...</span></div>
+            }
+            else if (_activeTab == "current")
+            {
+                @CurrentTable()
+                @Pager(_current)
+            }
+            else
+            {
+                @ArchiveTable()
+                @Pager(_archive)
+            }
+        </section>
+    }
+</div>
+
+@if (_deleteTarget is not null)
+{
+    <div class="modal-backdrop" @onclick="CancelDelete">
+        <div class="confirm-dialog" @onclick:stopPropagation="true">
+            <div class="confirm-icon danger">!</div>
+            <div class="confirm-content">
+                <h3>Xóa dòng khỏi Current?</h3>
+                <p>Dòng sẽ bị xóa khỏi <strong>@Definition.Title · Current</strong>. Kho hiện tại chưa thay đổi cho đến khi bạn bấm <strong>Lưu vào Kho</strong>.</p>
+                <div class="confirm-actions">
+                    <button class="btn secondary" @onclick="CancelDelete" disabled="@_rowBusy">Hủy</button>
+                    <button class="btn danger" @onclick="ConfirmDeleteAsync" disabled="@_rowBusy">
+                        @if (_rowBusy) { <span class="spinner"></span> }
+                        <span>Xóa dòng</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_confirmArchive)
+{
+    <div class="modal-backdrop" @onclick="() => _confirmArchive = false">
+        <div class="confirm-dialog" @onclick:stopPropagation="true">
+            <div class="confirm-icon save-confirm-icon">✓</div>
+            <div class="confirm-content">
+                <h3>Lưu @Definition.Title vào Kho?</h3>
+                <p>Kho của <strong>@Session.Area?.AreaName</strong> cho phần <strong>@Definition.Title</strong> sẽ được thay bằng toàn bộ Current hiện tại.</p>
+                <div class="confirm-actions">
+                    <button class="btn secondary" @onclick="() => _confirmArchive = false" disabled="@_saving">Hủy</button>
+                    <button class="btn save" @onclick="SaveArchiveAsync" disabled="@_saving">
+                        @if (_saving) { <span class="spinner"></span> }
+                        <span>Chốt & Lưu Kho</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string? ModuleKey { get; set; }
+
+    private AppModuleDefinition Definition { get; set; } = AppModuleDefinition.Get("vnpay");
+    private string _loadedModule = string.Empty;
+    private string _activeTab = "current";
+    private string _search = string.Empty;
+    private bool _loading;
+    private bool _rowBusy;
+    private bool _saving;
+    private bool _adding;
+    private bool _confirmArchive;
+    private long? _editingId;
+    private AppManagedRowView? _deleteTarget;
+    private string? _message;
+    private string? _error;
+    private Dictionary<string, string> _editValues = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _newValues = new(StringComparer.OrdinalIgnoreCase);
+    private AppManagedSnapshot? _current;
+    private AppManagedSnapshot? _archive;
+    private readonly List<ColumnOption> _columns = [];
+
+    private bool HasPendingEdit => _adding || _editingId.HasValue || _rowBusy || _saving;
+    private int ActiveTotalRows => _activeTab == "current" ? _current?.TotalRows ?? 0 : _archive?.TotalRows ?? 0;
+    private bool Show(string key) => _columns.FirstOrDefault(x => x.Key == key)?.Visible ?? true;
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var next = AppModuleDefinition.Get(ModuleKey);
+        if (!string.Equals(_loadedModule, next.Key, StringComparison.OrdinalIgnoreCase))
+        {
+            Definition = next;
+            _loadedModule = next.Key;
+            _activeTab = "current";
+            _search = string.Empty;
+            _adding = false;
+            _editingId = null;
+            _deleteTarget = null;
+            _message = _error = null;
+            BuildColumns();
+            if (Session.Area is not null) await LoadAsync();
+        }
+    }
+
+    private void BuildColumns()
+    {
+        _columns.Clear();
+        foreach (var column in Definition.Columns)
+            _columns.Add(new ColumnOption(column.Key, column.Label));
+        _columns.Add(new ColumnOption("CreatedAt", "CreatedAt"));
+    }
+
+    private RenderFragment CurrentTable() => @<div class="table-frame app-management-frame">
+        <table class="data-grid editable-trip-grid app-management-grid">
+            <thead>
+                <tr>
+                    @foreach (var column in Definition.Columns)
+                    {
+                        if (Show(column.Key)) { <th class="@column.CssClass">@column.Label</th> }
+                    }
+                    @if (Show("CreatedAt")) { <th class="datetime-col">CreatedAt</th> }
+                    <th class="control-col sticky-action">Thao tác</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (_adding)
+                {
+                    <tr class="editing-row new-row">
+                        @foreach (var column in Definition.Columns)
+                        {
+                            if (Show(column.Key))
+                            {
+                                <td class="@column.CssClass">@EditorInput(column, _newValues)</td>
+                            }
+                        }
+                        @if (Show("CreatedAt")) { <td class="muted-cell">Tự động khi lưu</td> }
+                        <td class="control-col sticky-action">
+                            <div class="row-actions">
+                                <button class="mini-btn save-row" @onclick="AddAsync" disabled="@_rowBusy">Lưu</button>
+                                <button class="mini-btn" @onclick="CancelAdd" disabled="@_rowBusy">Hủy</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+
+                @if (_current is null || _current.Rows.Count == 0)
+                {
+                    if (!_adding)
+                    {
+                        <tr><td colspan="@(VisibleColumnCount + 1)" class="empty-table-cell">Chưa có dữ liệu Current. Bấm “Thêm dòng” để nhập dữ liệu.</td></tr>
+                    }
+                }
+                else
+                {
+                    @foreach (var row in _current.Rows)
+                    {
+                        var editing = _editingId == row.Id;
+                        <tr class="@(editing ? "editing-row" : "")">
+                            @foreach (var column in Definition.Columns)
+                            {
+                                if (Show(column.Key))
+                                {
+                                    <td class="@column.CssClass">
+                                        @if (editing) { @EditorInput(column, _editValues) }
+                                        else { @DisplayValue(row, column) }
+                                    </td>
+                                }
+                            }
+                            @if (Show("CreatedAt")) { <td class="muted-cell datetime-col">@row.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                            <td class="control-col sticky-action">
+                                <div class="row-actions">
+                                    @if (editing)
+                                    {
+                                        <button class="mini-btn save-row" @onclick="SaveEditAsync" disabled="@_rowBusy">Lưu</button>
+                                        <button class="mini-btn" @onclick="CancelEdit" disabled="@_rowBusy">Hủy</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="mini-btn" @onclick="() => BeginEdit(row)" disabled="@HasPendingEdit">Sửa</button>
+                                        <button class="mini-btn delete" @onclick="() => AskDelete(row)" disabled="@HasPendingEdit">Xóa</button>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>;
+
+    private RenderFragment ArchiveTable() => @<div>
+        @if (_archive is null || _archive.Rows.Count == 0)
+        {
+            <div class="empty-state">
+                <div class="empty-icon">▣</div>
+                <strong>Kho @Definition.Title chưa có dữ liệu</strong>
+                <span>Nhập dữ liệu ở Current rồi bấm Lưu vào Kho.</span>
+            </div>
+        }
+        else
+        {
+            <div class="table-frame app-management-frame">
+                <table class="data-grid app-management-grid">
+                    <thead><tr>
+                        @foreach (var column in Definition.Columns)
+                        {
+                            if (Show(column.Key)) { <th class="@column.CssClass">@column.Label</th> }
+                        }
+                        @if (Show("CreatedAt")) { <th class="datetime-col">CreatedAt</th> }
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var row in _archive.Rows)
+                        {
+                            <tr>
+                                @foreach (var column in Definition.Columns)
+                                {
+                                    if (Show(column.Key)) { <td class="@column.CssClass">@DisplayValue(row, column)</td> }
+                                }
+                                @if (Show("CreatedAt")) { <td class="muted-cell datetime-col">@row.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>;
+
+    private RenderFragment Pager(AppManagedSnapshot? data) => @<div>
+        @if (data is not null && data.TotalRows > 0)
+        {
+            <div class="pager">
+                <span>Trang <strong>@data.Page</strong> / <strong>@data.TotalPages</strong> · @data.TotalRows.ToString("N0") dòng</span>
+                <div>
+                    <button class="btn secondary compact" @onclick="PreviousAsync" disabled="@(data.Page <= 1 || HasPendingEdit)">← Trước</button>
+                    <button class="btn secondary compact" @onclick="NextAsync" disabled="@(data.Page >= data.TotalPages || HasPendingEdit)">Sau →</button>
+                </div>
+            </div>
+        }
+    </div>;
+
+    private RenderFragment EditorInput(AppManagedColumn column, Dictionary<string, string> values) => @<input
+        class="grid-input @InputCss(column)"
+        type="@column.InputType"
+        step="@(column.InputType == "number" ? "any" : null)"
+        value="@GetDictionaryValue(values, column.Key)"
+        @oninput="e => SetDictionaryValue(values, column.Key, e.Value?.ToString())" />;
+
+    private string DisplayValue(AppManagedRowView row, AppManagedColumn column)
+    {
+        var value = row.Values.TryGetValue(column.Key, out var text) ? text : string.Empty;
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return value;
+    }
+
+    private static string InputCss(AppManagedColumn column) => column.CssClass switch
+    {
+        "money-col" => "money-input",
+        "number-col" => "number-input",
+        "wide-text-col" => "place-input",
+        "datetime-col" => "datetime-input",
+        _ => string.Empty
+    };
+
+    private int VisibleColumnCount => Definition.Columns.Count(x => Show(x.Key)) + (Show("CreatedAt") ? 1 : 0);
+
+    private void BeginAdd()
+    {
+        if (HasPendingEdit) return;
+        _message = _error = null;
+        _newValues = EmptyValues();
+        _adding = true;
+    }
+
+    private void CancelAdd()
+    {
+        _adding = false;
+        _newValues = EmptyValues();
+    }
+
+    private async Task AddAsync()
+    {
+        if (Session.Area is null) return;
+        _rowBusy = true; _error = _message = null;
+        try
+        {
+            await Store.AddCurrentAsync(Session.Area, Definition.Key, _newValues);
+            _adding = false;
+            _newValues = EmptyValues();
+            await LoadAsync(1);
+            _message = "Đã thêm dòng mới vào Current.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _rowBusy = false; }
+    }
+
+    private void BeginEdit(AppManagedRowView row)
+    {
+        if (HasPendingEdit) return;
+        _message = _error = null;
+        _editingId = row.Id;
+        _editValues = EmptyValues();
+        foreach (var column in Definition.Columns)
+            _editValues[column.Key] = row.Values.TryGetValue(column.Key, out var value) ? value : string.Empty;
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _editValues = EmptyValues();
+    }
+
+    private async Task SaveEditAsync()
+    {
+        if (Session.Area is null || !_editingId.HasValue) return;
+        _rowBusy = true; _error = _message = null;
+        try
+        {
+            await Store.UpdateCurrentAsync(Session.Area, Definition.Key, _editingId.Value, _editValues);
+            _editingId = null;
+            _editValues = EmptyValues();
+            await LoadAsync(CurrentPage);
+            _message = "Đã lưu thay đổi vào Current.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _rowBusy = false; }
+    }
+
+    private void AskDelete(AppManagedRowView row) => _deleteTarget = row;
+    private void CancelDelete() => _deleteTarget = null;
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (Session.Area is null || _deleteTarget is null) return;
+        _rowBusy = true; _error = _message = null;
+        try
+        {
+            await Store.DeleteCurrentAsync(Session.Area, Definition.Key, _deleteTarget.Id);
+            _deleteTarget = null;
+            await LoadAsync(CurrentPage);
+            _message = "Đã xóa dòng khỏi Current.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _rowBusy = false; }
+    }
+
+    private async Task SaveArchiveAsync()
+    {
+        if (Session.Area is null) return;
+        _saving = true; _confirmArchive = false; _error = _message = null;
+        try
+        {
+            var count = await Store.SaveCurrentToArchiveAsync(Session.Area, Definition.Key);
+            _archive = null;
+            _message = $"Đã lưu {count:N0} dòng {Definition.Title} vào Kho.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        if (HasPendingEdit || tab == _activeTab) return;
+        _activeTab = tab;
+        _search = string.Empty;
+        await LoadAsync(1);
+    }
+
+    private async Task SearchAsync() => await LoadAsync(1);
+    private async Task ClearSearchAsync() { _search = string.Empty; await LoadAsync(1); }
+
+    private async Task PreviousAsync()
+    {
+        var active = _activeTab == "current" ? _current : _archive;
+        if (active is not null && active.Page > 1) await LoadAsync(active.Page - 1);
+    }
+
+    private async Task NextAsync()
+    {
+        var active = _activeTab == "current" ? _current : _archive;
+        if (active is not null && active.Page < active.TotalPages) await LoadAsync(active.Page + 1);
+    }
+
+    private int CurrentPage => _current?.Page ?? 1;
+
+    private async Task LoadAsync(int page = 1)
+    {
+        if (Session.Area is null) return;
+        _loading = true;
+        try
+        {
+            if (_activeTab == "current")
+                _current = await Store.GetAsync(Session.Area, Definition.Key, false, page, 100, _search);
+            else
+                _archive = await Store.GetAsync(Session.Area, Definition.Key, true, page, 100, _search);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _loading = false; }
+    }
+
+    private Dictionary<string, string> EmptyValues()
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in Definition.Columns) values[column.Key] = string.Empty;
+        return values;
+    }
+
+    private static string GetDictionaryValue(Dictionary<string, string> values, string key) =>
+        values.TryGetValue(key, out var value) ? value : string.Empty;
+
+    private static void SetDictionaryValue(Dictionary<string, string> values, string key, string? value) =>
+        values[key] = value ?? string.Empty;
+
+    private Task RefreshColumns() { StateHasChanged(); return Task.CompletedTask; }
+
+    private void OnSessionChanged() => _ = InvokeAsync(async () =>
+    {
+        _adding = false;
+        _editingId = null;
+        _deleteTarget = null;
+        _current = _archive = null;
+        if (Session.Area is not null) await LoadAsync(1);
+        StateHasChanged();
+    });
+
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+}

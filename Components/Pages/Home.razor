@@ -1,0 +1,514 @@
+@page "/"
+@inject SkySoftReportService SkySoft
+@inject TaxiTripStoreService TripStore
+@inject TripDriverMatcherService DriverMatcher
+@inject AppSessionService Session
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>DashChecker - Báo cáo đồng hồ</PageTitle>
+
+<div class="page-shell">
+    <section class="page-header compact-page-header">
+        <div>
+            <div class="eyebrow">CUỐC XE</div>
+            <h1>Báo cáo đồng hồ</h1>
+            <p>Dữ liệu đồng hồ theo khu vực đăng nhập. Current cho phép thêm, sửa, xóa trực tiếp như bảng tính trước khi chốt vào Kho.</p>
+        </div>
+        @if (Session.Area is not null)
+        {
+            <div class="area-pill">@Session.Area.AreaCode · @Session.Area.AreaName</div>
+        }
+    </section>
+
+    @if (!Session.IsLoggedIn || Session.Area is null)
+    {
+        <section class="data-card">
+            <div class="empty-state login-required">
+                <div class="empty-icon">▤</div>
+                <strong>Đăng nhập tài khoản khu vực</strong>
+                <span>Sử dụng khung đăng nhập ở đầu thanh điều hướng bên trái để mở dữ liệu Bạc Liêu hoặc Vĩnh Long.</span>
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="data-card">
+            <div class="data-toolbar">
+                <div>
+                    <h2>@Session.Area.AreaName · Báo cáo đồng hồ</h2>
+                    <p>Current: 05:00 hôm qua → 05:00 hôm nay. Chỉ nút <strong>Chốt & Lưu Kho</strong> mới thay dữ liệu lịch sử.</p>
+                </div>
+                <div class="toolbar-actions">
+                    <button class="btn update" @onclick="UpdateAsync" disabled="@HasPendingEdit">
+                        @if (_updating)
+                        {
+                            <span class="spinner"></span><span>Đang cập nhật</span>
+                        }
+                        else
+                        {
+                            <span class="refresh-icon">↻</span><span>Cập nhật</span>
+                        }
+                    </button>
+                    @if (_current is not null)
+                    {
+                        <button class="btn save" @onclick="RequestSave" disabled="@HasPendingEdit">
+                            @if (_saving)
+                            {
+                                <span class="spinner"></span><span>Đang lưu</span>
+                            }
+                            else
+                            {
+                                <span>✓</span><span>Chốt & Lưu Kho</span>
+                            }
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_message))
+            {
+                <div class="inline-message success data-message">@_message</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="inline-message error data-message">@_error</div>
+            }
+
+            <div class="data-tabs">
+                <button class="data-tab @(_activeTab == "current" ? "active" : "")" @onclick='() => SwitchTabAsync("current")' disabled="@HasPendingEdit">
+                    Current <span class="tab-count">@(_current?.TotalRows.ToString("N0") ?? "0")</span>
+                </button>
+                <button class="data-tab @(_activeTab == "archive" ? "active" : "")" @onclick='() => SwitchTabAsync("archive")' disabled="@HasPendingEdit">
+                    Kho lưu trữ <span class="tab-count">@(_archive?.TotalRows.ToString("N0") ?? "0")</span>
+                </button>
+            </div>
+
+            @if (_loadingData)
+            {
+                <div class="empty-state"><span class="spinner dark"></span><span>Đang đọc dữ liệu...</span></div>
+            }
+            else if (_activeTab == "current")
+            {
+                @if (_current is null)
+                {
+                    <div class="empty-state">
+                        <div class="empty-icon">＋</div>
+                        <strong>Current chưa có dữ liệu</strong>
+                        <span>Bấm Cập nhật để lấy báo cáo hoặc Thêm mới để tạo một dòng thủ công.</span>
+                        <button class="btn primary" @onclick="BeginAdd">＋ Thêm mới</button>
+                    </div>
+                }
+                else
+                {
+                    <div class="snapshot-strip">
+                        <div><span>Kỳ dữ liệu</span><strong>@_current.FromDate.ToString("dd/MM/yyyy") 05:00 → @_current.ToDate.ToString("dd/MM/yyyy") 05:00</strong></div>
+                        <div><span>Thời gian tạo</span><strong>@_current.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</strong></div>
+                        <div><span>Trạng thái</span><strong class="@(_current.IsSaved ? "saved-text" : "pending-text")">@(_current.IsSaved ? $"Đã lưu {_current.SavedAt:HH:mm:ss}" : "Current chưa chốt / đã thay đổi")</strong></div>
+                    </div>
+
+                    <div class="kpi-grid">
+                        <div class="kpi-card"><span>Tổng cuốc</span><strong>@_current.Summary.TongCuoc.ToString("N0")</strong><small>@_current.Summary.SoXe.ToString("N0") xe</small></div>
+                        <div class="kpi-card revenue"><span>Doanh thu</span><strong>@FormatMoney(_current.Summary.TongDoanhThu)</strong><small>Tổng thành tiền</small></div>
+                        <div class="kpi-card"><span>KM có khách</span><strong>@FormatKm(_current.Summary.TongKmCoKhach)</strong><small>km</small></div>
+                        <div class="kpi-card"><span>KM rỗng</span><strong>@FormatKm(_current.Summary.TongKmRong)</strong><small>km</small></div>
+                        <div class="kpi-card"><span>Tổng KM</span><strong>@FormatKm(_current.Summary.TongKm)</strong><small>km vận hành</small></div>
+                    </div>
+
+                    @CurrentToolbar()
+                    @CurrentTable()
+
+                    <div class="pager">
+                        <span>Trang <strong>@_current.Page</strong> / <strong>@_current.TotalPages</strong></span>
+                        <div>
+                            <button class="btn secondary compact" @onclick="CurrentPreviousAsync" disabled="@(_current.Page <= 1 || HasPendingEdit)">← Trước</button>
+                            <button class="btn secondary compact" @onclick="CurrentNextAsync" disabled="@(_current.Page >= _current.TotalPages || HasPendingEdit)">Sau →</button>
+                        </div>
+                    </div>
+                }
+            }
+            else
+            {
+                @if (_archive is null || _archive.TotalRows == 0)
+                {
+                    <div class="empty-state"><div class="empty-icon">▣</div><strong>Kho chưa có dữ liệu</strong><span>Chốt Current để tạo dữ liệu lịch sử.</span></div>
+                }
+                else
+                {
+                    <div class="grid-tools archive-tools">
+                        <div class="search-box">
+                            <span class="search-icon">⌕</span>
+                            <input @bind="_archiveSearch" placeholder="Tìm số hiệu, biển số, điểm đi, điểm đến..." />
+                            <button class="btn secondary compact" @onclick="SearchArchiveAsync">Tìm</button>
+                            @if (!string.IsNullOrWhiteSpace(_archive.Search))
+                            {
+                                <button class="btn ghost compact" @onclick="ClearArchiveSearchAsync">Xóa lọc</button>
+                            }
+                        </div>
+                        <div class="table-options">
+                            <ColumnPicker Columns="@_columns" Changed="RefreshColumns" />
+                            <div class="result-count"><strong>@_archive.TotalRows.ToString("N0")</strong> cuốc</div>
+                        </div>
+                    </div>
+                    @ArchiveTable()
+                    <div class="pager">
+                        <span>Trang <strong>@_archive.Page</strong> / <strong>@_archive.TotalPages</strong></span>
+                        <div>
+                            <button class="btn secondary compact" @onclick="ArchivePreviousAsync" disabled="@(_archive.Page <= 1)">← Trước</button>
+                            <button class="btn secondary compact" @onclick="ArchiveNextAsync" disabled="@(_archive.Page >= _archive.TotalPages)">Sau →</button>
+                        </div>
+                    </div>
+                }
+            }
+        </section>
+    }
+</div>
+
+@if (_deleteTarget is not null)
+{
+    <div class="confirm-backdrop" @onclick="CancelDelete">
+        <div class="confirm-dialog" @onclick:stopPropagation="true">
+            <div class="confirm-icon danger">!</div>
+            <div class="confirm-content">
+                <h3>Xóa cuốc xe khỏi Current?</h3>
+                <p>Dòng sẽ bị xóa khỏi vùng thao tác. Kho lưu trữ chỉ thay đổi khi bạn bấm Chốt & Lưu Kho.</p>
+                <div class="confirm-details">
+                    <div><span>Số hiệu</span><strong>@_deleteTarget.SoHieu</strong></div>
+                    <div><span>Biển số</span><strong>@_deleteTarget.BienSo</strong></div>
+                    <div><span>Bắt đầu</span><strong>@_deleteTarget.BatDau.ToString("dd/MM/yyyy HH:mm:ss")</strong></div>
+                    <div><span>Tổng KM</span><strong>@FormatKm(_deleteTarget.TongKm)</strong></div>
+                </div>
+                <div class="confirm-actions">
+                    <button class="btn secondary" @onclick="CancelDelete" disabled="@_rowBusy">Hủy</button>
+                    <button class="btn danger" @onclick="ConfirmDeleteAsync" disabled="@_rowBusy">
+                        @if (_rowBusy) { <span class="spinner"></span><span>Đang xóa</span> } else { <span>Xóa dòng</span> }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showSaveConfirm && _current is not null && Session.Area is not null)
+{
+    <div class="confirm-backdrop" @onclick="CancelSave">
+        <div class="confirm-dialog" @onclick:stopPropagation="true">
+            <div class="confirm-icon save-confirm-icon">✓</div>
+            <div class="confirm-content">
+                <h3>Chốt dữ liệu Báo cáo đồng hồ?</h3>
+                <p>Bản Kho của ngày @_current.CreatedAt.ToString("dd/MM/yyyy") sẽ được thay bằng toàn bộ Current hiện tại.</p>
+                <div class="confirm-actions">
+                    <button class="btn secondary" @onclick="CancelSave" disabled="@_saving">Hủy</button>
+                    <button class="btn save" @onclick="SaveAsync" disabled="@_saving">
+                        @if (_saving) { <span class="spinner"></span><span>Đang lưu</span> } else { <span>✓ Chốt & Lưu Kho</span> }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private const int PageSize = 100;
+    private bool _updating, _saving, _loadingData, _showSaveConfirm, _rowBusy, _adding;
+    private long? _editId;
+    private TaxiTripListItem? _deleteTarget;
+    private TaxiTripCurrentEditModel _rowEditor = TaxiTripCurrentEditModel.CreateNew();
+    private string _activeTab = "current";
+    private string _currentSearch = string.Empty;
+    private string _archiveSearch = string.Empty;
+    private string? _message, _error;
+    private CurrentTaxiTripPage? _current;
+    private ArchiveTaxiTripPage? _archive;
+
+    private readonly List<ColumnOption> _columns =
+    [
+        new("SoHieu", "Số hiệu"), new("BienSo", "Biển số"), new("BatDau", "Bắt đầu"),
+        new("KetThuc", "Kết thúc"), new("ThoiGian", "Thời gian"), new("KmCoKhach", "KM có khách"),
+        new("KmRong", "KM rỗng"), new("TongKm", "Tổng KM"), new("ThanhTien", "Thành tiền"),
+        new("DiemDau", "Điểm đi"), new("DiemCuoi", "Điểm đến"), new("CreatedAt", "Thời gian tạo")
+    ];
+
+    private bool HasPendingEdit => _updating || _saving || _rowBusy || _adding || _editId.HasValue || _deleteTarget is not null;
+    private bool Show(string key) => _columns.First(x => x.Key == key).Visible;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        if (Session.Area is not null) await LoadAllAreaDataAsync();
+    }
+
+    private void OnSessionChanged() => _ = InvokeAsync(async () =>
+    {
+        _current = null; _archive = null; _currentSearch = _archiveSearch = string.Empty;
+        if (Session.Area is not null) await LoadAllAreaDataAsync();
+        StateHasChanged();
+    });
+
+    private RenderFragment CurrentToolbar() => @<div class="grid-tools">
+        <div class="search-box">
+            <span class="search-icon">⌕</span>
+            <input @bind="_currentSearch" placeholder="Tìm số hiệu, biển số, điểm đi, điểm đến..." disabled="@HasPendingEdit" />
+            <button class="btn secondary compact" @onclick="SearchCurrentAsync" disabled="@HasPendingEdit">Tìm</button>
+            @if (!string.IsNullOrWhiteSpace(_current?.Search))
+            {
+                <button class="btn ghost compact" @onclick="ClearCurrentSearchAsync" disabled="@HasPendingEdit">Xóa lọc</button>
+            }
+        </div>
+        <div class="table-options">
+            <ColumnPicker Columns="@_columns" Changed="RefreshColumns" />
+            <button class="btn primary compact" @onclick="BeginAdd" disabled="@HasPendingEdit">＋ Thêm mới</button>
+            <div class="result-count"><strong>@(_current?.TotalRows.ToString("N0") ?? "0")</strong> cuốc</div>
+        </div>
+    </div>;
+
+    private RenderFragment CurrentTable() => @<div class="table-frame">
+        <table class="data-grid trip-grid editable-trip-grid">
+            <thead><tr>
+                <th class="control-col">Thao tác</th>
+                @if (Show("SoHieu")) { <th>Số hiệu</th> }
+                @if (Show("BienSo")) { <th>Biển số</th> }
+                @if (Show("BatDau")) { <th>Bắt đầu</th> }
+                @if (Show("KetThuc")) { <th>Kết thúc</th> }
+                @if (Show("ThoiGian")) { <th>Thời gian</th> }
+                @if (Show("KmCoKhach")) { <th>KM có khách</th> }
+                @if (Show("KmRong")) { <th>KM rỗng</th> }
+                @if (Show("TongKm")) { <th>Tổng KM</th> }
+                @if (Show("ThanhTien")) { <th>Thành tiền</th> }
+                @if (Show("DiemDau")) { <th>Điểm đi</th> }
+                @if (Show("DiemCuoi")) { <th>Điểm đến</th> }
+                @if (Show("CreatedAt")) { <th>Thời gian tạo</th> }
+            </tr></thead>
+            <tbody>
+                @if (_adding) { @EditorRow("Thêm") }
+                @if (_current is not null)
+                {
+                    @foreach (var row in _current.Rows)
+                    {
+                        @if (_editId == row.Id) { @EditorRow("Sửa") }
+                        else
+                        {
+                            <tr>
+                                <td class="control-col"><div class="row-actions"><button class="mini-btn edit" @onclick="() => BeginEdit(row)" disabled="@HasPendingEdit">Sửa</button><button class="mini-btn delete" @onclick="() => RequestDelete(row)" disabled="@HasPendingEdit">Xóa</button></div></td>
+                                @if (Show("SoHieu")) { <td><span class="trip-code">@row.SoHieu</span></td> }
+                                @if (Show("BienSo")) { <td><span class="plate-badge">@row.BienSo</span></td> }
+                                @if (Show("BatDau")) { <td class="date-cell">@row.BatDau.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                                @if (Show("KetThuc")) { <td class="date-cell">@row.KetThuc.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                                @if (Show("ThoiGian")) { <td class="duration-cell">@FormatDuration(row.ThoiLuong)</td> }
+                                @if (Show("KmCoKhach")) { <td class="number-col">@FormatKm(row.KmCoKhach)</td> }
+                                @if (Show("KmRong")) { <td class="number-col">@FormatKm(row.KmRong)</td> }
+                                @if (Show("TongKm")) { <td class="number-col total-km">@FormatKm(row.TongKm)</td> }
+                                @if (Show("ThanhTien")) { <td class="money-col">@FormatMoney(row.ThanhTien)</td> }
+                                @if (Show("DiemDau")) { <td class="place-col" title="@row.DiemDau">@row.DiemDau</td> }
+                                @if (Show("DiemCuoi")) { <td class="place-col" title="@row.DiemCuoi">@row.DiemCuoi</td> }
+                                @if (Show("CreatedAt")) { <td class="date-cell">@_current.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                            </tr>
+                        }
+                    }
+                }
+            </tbody>
+        </table>
+    </div>;
+
+    private RenderFragment EditorRow(string mode) => @<tr class="editing-row">
+        <td class="control-col"><div class="row-actions"><button class="mini-btn save-row" @onclick="SaveRowAsync" disabled="@_rowBusy">@(_rowBusy ? "Đang lưu" : "Lưu")</button><button class="mini-btn cancel" @onclick="CancelRowEdit" disabled="@_rowBusy">Hủy</button></div></td>
+        @if (Show("SoHieu")) { <td><input class="grid-input short-input" @bind="_rowEditor.SoHieu" /></td> }
+        @if (Show("BienSo")) { <td><input class="grid-input plate-input" @bind="_rowEditor.BienSo" /></td> }
+        @if (Show("BatDau")) { <td><input class="grid-input datetime-input" type="datetime-local" step="1" @bind="_rowEditor.BatDau" /></td> }
+        @if (Show("KetThuc")) { <td><input class="grid-input datetime-input" type="datetime-local" step="1" @bind="_rowEditor.KetThuc" /></td> }
+        @if (Show("ThoiGian")) { <td class="duration-cell">@FormatDuration(_rowEditor.KetThuc >= _rowEditor.BatDau ? _rowEditor.KetThuc - _rowEditor.BatDau : TimeSpan.Zero)</td> }
+        @if (Show("KmCoKhach")) { <td><input class="grid-input number-input" type="number" step="0.001" @bind="_rowEditor.KmCoKhach" /></td> }
+        @if (Show("KmRong")) { <td><input class="grid-input number-input" type="number" step="0.001" @bind="_rowEditor.KmRong" /></td> }
+        @if (Show("TongKm")) { <td><input class="grid-input number-input" type="number" step="0.001" @bind="_rowEditor.TongKm" /></td> }
+        @if (Show("ThanhTien")) { <td><input class="grid-input money-input" type="number" step="1" @bind="_rowEditor.ThanhTien" /></td> }
+        @if (Show("DiemDau")) { <td><input class="grid-input place-input" @bind="_rowEditor.DiemDau" /></td> }
+        @if (Show("DiemCuoi")) { <td><input class="grid-input place-input" @bind="_rowEditor.DiemCuoi" /></td> }
+        @if (Show("CreatedAt")) { <td class="date-cell muted-cell">@(_current?.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss") ?? "Tạo khi lưu")</td> }
+    </tr>;
+
+    private RenderFragment ArchiveTable() => @<div class="table-frame">
+        <table class="data-grid trip-grid archive-grid">
+            <thead><tr>
+                @if (Show("SoHieu")) { <th>Số hiệu</th> }
+                @if (Show("BienSo")) { <th>Biển số</th> }
+                @if (Show("BatDau")) { <th>Bắt đầu</th> }
+                @if (Show("KetThuc")) { <th>Kết thúc</th> }
+                @if (Show("ThoiGian")) { <th>Thời gian</th> }
+                @if (Show("KmCoKhach")) { <th>KM có khách</th> }
+                @if (Show("KmRong")) { <th>KM rỗng</th> }
+                @if (Show("TongKm")) { <th>Tổng KM</th> }
+                @if (Show("ThanhTien")) { <th>Thành tiền</th> }
+                @if (Show("DiemDau")) { <th>Điểm đi</th> }
+                @if (Show("DiemCuoi")) { <th>Điểm đến</th> }
+                @if (Show("CreatedAt")) { <th>Thời gian tạo</th> }
+            </tr></thead>
+            <tbody>
+                @if (_archive is not null)
+                {
+                    @foreach (var row in _archive.Rows)
+                    {
+                        <tr>
+                            @if (Show("SoHieu")) { <td><span class="trip-code">@row.SoHieu</span></td> }
+                            @if (Show("BienSo")) { <td><span class="plate-badge">@row.BienSo</span></td> }
+                            @if (Show("BatDau")) { <td class="date-cell">@row.BatDau.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                            @if (Show("KetThuc")) { <td class="date-cell">@row.KetThuc.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                            @if (Show("ThoiGian")) { <td class="duration-cell">@FormatDuration(row.ThoiLuong)</td> }
+                            @if (Show("KmCoKhach")) { <td class="number-col">@FormatKm(row.KmCoKhach)</td> }
+                            @if (Show("KmRong")) { <td class="number-col">@FormatKm(row.KmRong)</td> }
+                            @if (Show("TongKm")) { <td class="number-col total-km">@FormatKm(row.TongKm)</td> }
+                            @if (Show("ThanhTien")) { <td class="money-col">@FormatMoney(row.ThanhTien)</td> }
+                            @if (Show("DiemDau")) { <td class="place-col" title="@row.DiemDau">@row.DiemDau</td> }
+                            @if (Show("DiemCuoi")) { <td class="place-col" title="@row.DiemCuoi">@row.DiemCuoi</td> }
+                            @if (Show("CreatedAt")) { <td class="date-cell">@row.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</td> }
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>;
+
+    private void BeginAdd()
+    {
+        if (Session.Area is null || HasPendingEdit) return;
+        foreach (var column in _columns) column.Visible = true;
+        _rowEditor = TaxiTripCurrentEditModel.CreateNew();
+        _adding = true; _editId = null; _activeTab = "current"; _message = _error = null;
+    }
+
+    private void BeginEdit(TaxiTripListItem row)
+    {
+        if (HasPendingEdit) return;
+        _rowEditor = TaxiTripCurrentEditModel.From(row);
+        _editId = row.Id; _adding = false; _message = _error = null;
+    }
+
+    private void CancelRowEdit()
+    {
+        if (_rowBusy) return;
+        _adding = false; _editId = null; _rowEditor = TaxiTripCurrentEditModel.CreateNew();
+    }
+
+    private async Task SaveRowAsync()
+    {
+        if (Session.Area is null || (!_adding && !_editId.HasValue)) return;
+        _message = _error = null;
+        try
+        {
+            _rowBusy = true;
+            if (_adding)
+            {
+                await TripStore.AddCurrentRowAsync(Session.Area, _rowEditor);
+                _message = "Đã thêm cuốc vào Current. Kho chưa thay đổi.";
+            }
+            else
+            {
+                await TripStore.UpdateCurrentRowAsync(Session.Area, _editId!.Value, _rowEditor);
+                _message = "Đã lưu thay đổi cuốc Current. Kho chưa thay đổi.";
+            }
+            _adding = false; _editId = null;
+            await DriverMatcher.RefreshCurrentTripAssignmentsAsync(Session.Area);
+            _current = await TripStore.GetCurrentPageAsync(Session.Area, _current?.Page ?? 1, PageSize, _currentSearch);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _rowBusy = false; }
+    }
+
+    private void RequestDelete(TaxiTripListItem row)
+    {
+        if (HasPendingEdit) return;
+        _deleteTarget = row; _message = _error = null;
+    }
+
+    private void CancelDelete() { if (!_rowBusy) _deleteTarget = null; }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (Session.Area is null || _deleteTarget is null) return;
+        var target = _deleteTarget;
+        try
+        {
+            _rowBusy = true; _message = _error = null;
+            await TripStore.DeleteCurrentRowAsync(Session.Area, target.Id);
+            await DriverMatcher.RefreshCurrentTripAssignmentsAsync(Session.Area);
+            _deleteTarget = null;
+            _current = await TripStore.GetCurrentPageAsync(Session.Area, _current?.Page ?? 1, PageSize, _currentSearch);
+            _message = $"Đã xóa cuốc {target.SoHieu} - {target.BienSo} khỏi Current.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _rowBusy = false; }
+    }
+
+    private async Task UpdateAsync()
+    {
+        if (Session.Area is null || !SkySoft.IsLoggedIn || HasPendingEdit) return;
+        _message = _error = null;
+        try
+        {
+            _updating = true;
+            var report = await SkySoft.FetchRecentTaxiTripsAsync();
+            await TripStore.ReplaceCurrentAsync(Session.Area, report);
+            await DriverMatcher.RefreshCurrentTripAssignmentsAsync(Session.Area);
+            _currentSearch = string.Empty;
+            _current = await TripStore.GetCurrentPageAsync(Session.Area, 1, PageSize);
+            _activeTab = "current";
+            _message = $"Đã cập nhật {_current?.TotalRows.ToString("N0") ?? "0"} cuốc vào Current. Kho chưa thay đổi.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _updating = false; }
+    }
+
+    private void RequestSave() { if (_current is not null && !HasPendingEdit) _showSaveConfirm = true; }
+    private void CancelSave() => _showSaveConfirm = false;
+
+    private async Task SaveAsync()
+    {
+        if (Session.Area is null || _current is null) return;
+        try
+        {
+            _saving = true; _message = _error = null;
+            var count = await TripStore.SaveCurrentToArchiveAsync(Session.Area);
+            _showSaveConfirm = false;
+            _current = await TripStore.GetCurrentPageAsync(Session.Area, _current.Page, PageSize, _currentSearch);
+            _archive = await TripStore.GetArchivePageAsync(Session.Area, 1, PageSize, _archiveSearch);
+            _message = $"Đã chốt {count:N0} cuốc vào Kho.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task LoadAllAreaDataAsync()
+    {
+        if (Session.Area is null) return;
+        try
+        {
+            _loadingData = true;
+            _current = await TripStore.GetCurrentPageAsync(Session.Area, 1, PageSize, _currentSearch);
+            _archive = await TripStore.GetArchivePageAsync(Session.Area, 1, PageSize, _archiveSearch);
+        }
+        finally { _loadingData = false; }
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        if (HasPendingEdit || Session.Area is null) return;
+        _activeTab = tab == "archive" ? "archive" : "current";
+        if (_activeTab == "current") _current = await TripStore.GetCurrentPageAsync(Session.Area, _current?.Page ?? 1, PageSize, _currentSearch);
+        else _archive = await TripStore.GetArchivePageAsync(Session.Area, _archive?.Page ?? 1, PageSize, _archiveSearch);
+    }
+
+    private async Task SearchCurrentAsync() { if (Session.Area is not null) _current = await TripStore.GetCurrentPageAsync(Session.Area, 1, PageSize, _currentSearch); }
+    private async Task ClearCurrentSearchAsync() { _currentSearch = string.Empty; await SearchCurrentAsync(); }
+    private async Task SearchArchiveAsync() { if (Session.Area is not null) _archive = await TripStore.GetArchivePageAsync(Session.Area, 1, PageSize, _archiveSearch); }
+    private async Task ClearArchiveSearchAsync() { _archiveSearch = string.Empty; await SearchArchiveAsync(); }
+    private async Task CurrentPreviousAsync() { if (Session.Area is not null && _current is not null && _current.Page > 1 && !HasPendingEdit) _current = await TripStore.GetCurrentPageAsync(Session.Area, _current.Page - 1, PageSize, _currentSearch); }
+    private async Task CurrentNextAsync() { if (Session.Area is not null && _current is not null && _current.Page < _current.TotalPages && !HasPendingEdit) _current = await TripStore.GetCurrentPageAsync(Session.Area, _current.Page + 1, PageSize, _currentSearch); }
+    private async Task ArchivePreviousAsync() { if (Session.Area is not null && _archive is not null && _archive.Page > 1) _archive = await TripStore.GetArchivePageAsync(Session.Area, _archive.Page - 1, PageSize, _archiveSearch); }
+    private async Task ArchiveNextAsync() { if (Session.Area is not null && _archive is not null && _archive.Page < _archive.TotalPages) _archive = await TripStore.GetArchivePageAsync(Session.Area, _archive.Page + 1, PageSize, _archiveSearch); }
+    private Task RefreshColumns() { StateHasChanged(); return Task.CompletedTask; }
+
+    private static string FormatMoney(decimal value) => $"{value:N0} đ";
+    private static string FormatKm(decimal value) => value.ToString("N3");
+    private static string FormatDuration(TimeSpan duration) => duration.TotalHours >= 1 ? $"{(int)duration.TotalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}" : $"{duration.Minutes:00}:{duration.Seconds:00}";
+
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+}

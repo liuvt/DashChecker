@@ -1,0 +1,216 @@
+@inherits LayoutComponentBase
+@inject SkySoftReportService SkySoft
+@inject CredentialStoreService CredentialStore
+@inject AreaAccountService AreaAccounts
+@inject AppSessionService Session
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<MudThemeProvider />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<div class="app-root app-with-sidebar">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <span class="brand-mark">D</span>
+            <div>
+                <strong>DashChecker</strong>
+                <small>Quản lý vận hành</small>
+            </div>
+        </div>
+
+        <section class="sidebar-account">
+            @if (Session.IsLoggedIn && Session.Area is not null)
+            {
+                <div class="account-caption">TÀI KHOẢN KHU VỰC</div>
+                <div class="account-area-row">
+                    <span class="account-area-code">@Session.Area.AreaCode</span>
+                    <div>
+                        <strong>@Session.Area.AreaName</strong>
+                        <small>@Session.UserName</small>
+                    </div>
+                </div>
+                <div class="sidebar-session-status"><span class="status-dot"></span> SkySoft đã đăng nhập</div>
+                <button class="btn sidebar-logout" @onclick="Logout">Đăng xuất</button>
+            }
+            else
+            {
+                <div class="account-caption">ĐĂNG NHẬP KHU VỰC</div>
+                <label class="sidebar-field">
+                    <span>Tài khoản</span>
+                    <input autocomplete="username" @bind="_userName" disabled="@_loggingIn" placeholder="namthangbl / namthangvl" />
+                </label>
+                <label class="sidebar-field">
+                    <span>Mật khẩu</span>
+                    <input type="password" autocomplete="current-password" @bind="_password" disabled="@_loggingIn" placeholder="Mật khẩu SkySoft" />
+                </label>
+                <label class="sidebar-remember">
+                    <input type="checkbox" @bind="_rememberPassword" disabled="@_loggingIn" />
+                    <span>Nhớ mật khẩu</span>
+                </label>
+                <button class="btn primary sidebar-login" @onclick="LoginAsync" disabled="@_loggingIn">
+                    @if (_loggingIn)
+                    {
+                        <span class="spinner"></span><span>Đang đăng nhập</span>
+                    }
+                    else
+                    {
+                        <span>Đăng nhập</span>
+                    }
+                </button>
+                @if (!string.IsNullOrWhiteSpace(_loginError))
+                {
+                    <div class="sidebar-login-error">@_loginError</div>
+                }
+            }
+        </section>
+
+        <nav class="side-nav">
+            <div class="nav-section-label">CUỐC XE</div>
+            <NavLink href="/" Match="NavLinkMatch.All" class="side-nav-item">
+                <span class="nav-icon">▤</span><span>Báo cáo đồng hồ</span>
+            </NavLink>
+
+            <div class="nav-section-label">VẬN HÀNH</div>
+            <NavLink href="/shift-management" class="side-nav-item">
+                <span class="nav-icon">⇄</span><span>Quản lý lên xuống ca</span>
+            </NavLink>
+            <NavLink href="/online-vehicles" class="side-nav-item">
+                <span class="nav-icon">⌖</span><span>GPS Online</span>
+            </NavLink>
+            <NavLink href="/app-trips" class="side-nav-item">
+                <span class="nav-icon">≋</span><span>Báo cáo cuốc khách</span>
+            </NavLink>
+
+
+            <div class="nav-section-label">QUẢN LÝ APP</div>
+            <NavLink href="/app-management" Match="NavLinkMatch.All" class="side-nav-item app-nav-parent">
+                <span class="nav-icon">▦</span><span>Quản lý App</span>
+            </NavLink>
+            <NavLink href="/app-management/vnpay" class="side-nav-item app-nav-item">
+                <span class="nav-icon">▦</span><span>App VNPay</span>
+            </NavLink>
+            <NavLink href="/app-management/customer-promo" class="side-nav-item app-nav-item">
+                <span class="nav-icon">%</span><span>Khuyến mãi App KH</span>
+            </NavLink>
+            <NavLink href="/app-management/customer-app" class="side-nav-item app-nav-item">
+                <span class="nav-icon">◉</span><span>App Khách Hàng</span>
+            </NavLink>
+            <NavLink href="/app-management/xanh-sm" class="side-nav-item app-nav-item">
+                <span class="nav-icon">◆</span><span>App Xanh SM</span>
+            </NavLink>
+            <NavLink href="/app-management/contracts" class="side-nav-item app-nav-item">
+                <span class="nav-icon">▤</span><span>Hợp đồng</span>
+            </NavLink>
+        </nav>
+
+        <div class="sidebar-footer">Blazor Server · .NET 9.0.3</div>
+    </aside>
+
+    <div class="app-content">
+        <header class="content-topbar">
+            <div>
+                <strong>@CurrentTitle</strong>
+                @if (Session.Area is not null)
+                {
+                    <span>@Session.Area.AreaName</span>
+                }
+            </div>
+            <div class="content-status @(Session.IsLoggedIn ? "online" : "offline")">
+                <span class="status-dot"></span>@(Session.IsLoggedIn ? "Đã kết nối" : "Chưa đăng nhập")
+            </div>
+        </header>
+        <main>@Body</main>
+    </div>
+</div>
+
+@code {
+    private string _userName = string.Empty;
+    private string _password = string.Empty;
+    private bool _rememberPassword;
+    private bool _loggingIn;
+    private string? _loginError;
+
+    private string CurrentTitle
+    {
+        get
+        {
+            var path = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].Trim('/').ToLowerInvariant();
+            if (path.StartsWith("app-management/", StringComparison.OrdinalIgnoreCase))
+            {
+                var moduleKey = path.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+                return AppModuleDefinition.Get(moduleKey).Title;
+            }
+
+            return path switch
+            {
+                "app-management" => "Quản lý App",
+                "shift-management" => "Quản lý lên xuống ca",
+                "online-vehicles" => "GPS Online",
+                "app-trips" => "Báo cáo cuốc khách",
+                _ => "Báo cáo đồng hồ"
+            };
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        Navigation.LocationChanged += OnLocationChanged;
+
+        if (!Session.IsLoggedIn)
+        {
+            var saved = await CredentialStore.LoadAsync();
+            _userName = saved.UserName;
+            _password = saved.Password;
+            _rememberPassword = saved.RememberPassword;
+        }
+    }
+
+    private async Task LoginAsync()
+    {
+        _loginError = null;
+        try
+        {
+            _loggingIn = true;
+            var area = await AreaAccounts.ResolveAsync(_userName);
+            if (area is null)
+                throw new InvalidOperationException($"Tài khoản '{_userName.Trim()}' chưa được phân loại khu vực.");
+
+            await SkySoft.LoginAsync(_userName, _password, _rememberPassword);
+            if (!SkySoft.IsLoggedIn)
+                throw new InvalidOperationException("Không thể xác nhận phiên đăng nhập SkySoft.");
+
+            Session.SetLoggedIn(_userName, area);
+            Navigation.NavigateTo("/", replace: false);
+        }
+        catch (Exception ex)
+        {
+            Session.Clear();
+            _loginError = ex.Message;
+        }
+        finally
+        {
+            _loggingIn = false;
+        }
+    }
+
+    private void Logout()
+    {
+        SkySoft.Logout();
+        Session.Clear();
+        _password = string.Empty;
+        Navigation.NavigateTo("/", replace: false);
+    }
+
+    private void OnSessionChanged() => _ = InvokeAsync(StateHasChanged);
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+}

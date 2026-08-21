@@ -1,0 +1,43 @@
+@using DashChecker.Models
+
+<details class="column-picker">
+    <summary>☷ Cột hiển thị <span>@Columns.Count(x => x.Visible)/@Columns.Count</span></summary>
+    <div class="column-picker-menu">
+        <div class="column-picker-head">
+            <strong>Chọn cột hiển thị</strong>
+            <button type="button" class="link-button" @onclick="ShowAll">Hiện tất cả</button>
+        </div>
+        <div class="column-picker-list">
+            @foreach (var column in Columns)
+            {
+                <label>
+                    <input type="checkbox" checked="@column.Visible" @onchange="e => Toggle(column, e)" />
+                    <span>@column.Label</span>
+                </label>
+            }
+        </div>
+    </div>
+</details>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ColumnOption> Columns { get; set; } = [];
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private async Task Toggle(ColumnOption column, ChangeEventArgs args)
+    {
+        column.Visible = args.Value switch
+        {
+            bool value => value,
+            string text when bool.TryParse(text, out var parsed) => parsed,
+            _ => false
+        };
+        await Changed.InvokeAsync();
+    }
+
+    private async Task ShowAll()
+    {
+        foreach (var column in Columns)
+            column.Visible = true;
+        await Changed.InvokeAsync();
+    }
+}
