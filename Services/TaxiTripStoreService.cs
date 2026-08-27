@@ -451,6 +451,39 @@ public sealed class TaxiTripStoreService
             throw new InvalidOperationException("KM và Thành tiền không được là số âm.");
     }
 
+    /// <summary>
+    /// Lấy toàn bộ Current của khu vực hiện tại, không phụ thuộc paging/search trên UI.
+    /// Dùng cho thao tác xuất toàn bộ dữ liệu sang Google Sheet.
+    /// </summary>
+    public async Task<IReadOnlyList<TaxiTripListItem>> GetAllCurrentRowsAsync(
+        AreaContext area,
+        CancellationToken cancellationToken = default)
+    {
+        var today = VietnamClock.Now.Date;
+        var tomorrow = today.AddDays(1);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var sync = await db.TaxiTripCurrentSyncs.AsNoTracking()
+            .Where(x => x.AreaCode == area.AreaCode && x.CreatedAt >= today && x.CreatedAt < tomorrow)
+            .OrderByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (sync is null)
+            return Array.Empty<TaxiTripListItem>();
+
+        return await db.TaxiTripCurrents.AsNoTracking()
+            .Where(x => x.SyncId == sync.Id && x.AreaCode == area.AreaCode)
+            .OrderBy(x => x.SoHieu)
+            .ThenBy(x => x.BatDau)
+            .Select(x => new TaxiTripListItem(
+                x.Id, x.RowOrder, x.SoHieu, x.BienSo, x.BatDau, x.KetThuc,
+                x.KmCoKhach, x.KmRong, x.TongKm, x.ThanhTien, x.DiemDau, x.DiemCuoi,
+                x.DriverNames, x.DriverEmployeeCodes, x.DriverPhones, x.ShiftSoTai,
+                x.DriverCount, x.DriverMatchStatus, x.DriverShiftStartAt, x.DriverShiftNextAt,
+                x.AppUserName, x.AppVehicleNo, x.AppVehicleCode, x.AppTripId, x.AppMatchStatus))
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<CurrentTaxiTripPage?> GetCurrentPageAsync(
         AreaContext area,
         int page = 1,

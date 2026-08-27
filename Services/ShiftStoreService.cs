@@ -182,6 +182,7 @@ public sealed class ShiftStoreService
     public async Task<long> AddCurrentRowAsync(
         AreaContext area,
         ShiftCurrentEditModel input,
+        int? sourceRowOverride = null,
         CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeInput(area, input);
@@ -212,10 +213,13 @@ public sealed class ShiftStoreService
             await db.SaveChangesAsync(cancellationToken);
         }
 
-        var nextSourceRow = (await db.ShiftCurrents
+        var nextSourceRow = sourceRowOverride ?? ((await db.ShiftCurrents
             .Where(x => x.SyncId == sync.Id)
             .Select(x => (int?)x.SourceRow)
-            .MaxAsync(cancellationToken) ?? 0) + 1;
+            .MaxAsync(cancellationToken) ?? 0) + 1);
+
+        if (nextSourceRow <= 1)
+            throw new InvalidOperationException("SourceRow Google Sheet không hợp lệ.");
 
         var entity = CreateCurrentEntity(sync, area, nextSourceRow, normalized);
         db.ShiftCurrents.Add(entity);
@@ -260,9 +264,18 @@ public sealed class ShiftStoreService
 
         var sync = await db.ShiftCurrentSyncs
             .FirstAsync(x => x.Id == entity.SyncId && x.AreaCode == area.AreaCode, cancellationToken);
+        var deletedSourceRow = entity.SourceRow;
 
         db.ShiftCurrents.Remove(entity);
         await db.SaveChangesAsync(cancellationToken);
+
+        // Khi xóa một row thật trên Google Sheet, mọi row bên dưới dịch lên 1.
+        // Đồng bộ lại SourceRow của Current để các lần Sửa/Xóa kế tiếp vẫn trỏ đúng dòng Google.
+        await db.ShiftCurrents
+            .Where(x => x.SyncId == sync.Id && x.SourceRow > deletedSourceRow)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.SourceRow, x => x.SourceRow - 1), cancellationToken);
+
         sync.RowCount = await db.ShiftCurrents.CountAsync(x => x.SyncId == sync.Id, cancellationToken);
         sync.SavedAt = null;
         await db.SaveChangesAsync(cancellationToken);

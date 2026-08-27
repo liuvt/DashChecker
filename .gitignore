@@ -7,3 +7,9 @@ App_Data/*.db-shm
 App_Data/*.db-wal
 App_Data/Keys/*
 !App_Data/Keys/.gitkeep
+
+# Google Service Account credentials
+App_Data/google-service-account*.json
+
+# DashChecker Google Sheets service-account key
+App_Data/ggs-dashchecker-api.json

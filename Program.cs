@@ -6,6 +6,8 @@ using DashChecker.Components;
 using DashChecker.Data;
 using DashChecker.Models;
 using DashChecker.Services;
+using DashChecker.Servers.Interfaces;
+using DashChecker.Servers;
 
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
@@ -22,6 +24,8 @@ builder.Services.Configure<SkySoftOptions>(
     builder.Configuration.GetSection("SkySoft"));
 builder.Services.Configure<GoogleShiftOptions>(
     builder.Configuration.GetSection("GoogleShift"));
+builder.Services.Configure<GgsDashCheckerOptions>(
+    builder.Configuration.GetSection("GgsDashChecker"));
 builder.Services.Configure<SkySoftAppOptions>(
     builder.Configuration.GetSection("SkySoftApp"));
 
@@ -48,6 +52,8 @@ builder.Services.AddHttpClient<GoogleShiftService>();
 builder.Services.AddHttpClient<SkySoftAppService>();
 builder.Services.AddScoped<OnlineAppStoreService>();
 builder.Services.AddScoped<AppManagementStoreService>();
+// Một instance toàn app để khóa thao tác ghi F:O giữa nhiều Blazor circuit.
+builder.Services.AddSingleton<IGgsCheckerServer, GgsCheckerServer>();
 
 // Mỗi Blazor circuit có CookieContainer SkySoft riêng.
 builder.Services.AddScoped<SkySoftReportService>();

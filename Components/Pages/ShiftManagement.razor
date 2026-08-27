@@ -12,7 +12,7 @@
         <div>
             <div class="eyebrow">DASHCHECKER • GOOGLE SHEETS</div>
             <h1>Quản lý danh sách lên xuống ca</h1>
-            <p>Current là vùng thao tác: thêm, sửa, xóa tại đây. Chỉ khi bấm Lưu mới replace dữ liệu Kho theo ngày CreatedAt.</p>
+            <p>Current là vùng thao tác: thêm, sửa, xóa sẽ ghi trực tiếp Google Sheet và đồng bộ SQLite. Chỉ khi bấm Lưu mới replace dữ liệu Kho theo ngày CreatedAt.</p>
         </div>
         @if (Session.Area is not null)
         {
@@ -169,7 +169,7 @@
             <div class="confirm-icon danger">!</div>
             <div class="confirm-content">
                 <h3 id="delete-dialog-title">Xác nhận xóa dữ liệu?</h3>
-                <p>Dòng này sẽ bị xóa khỏi <strong>Current</strong>. Dữ liệu trong Kho chưa thay đổi cho đến khi bạn bấm <strong>Lưu vào Kho</strong>.</p>
+                <p>Dòng này sẽ bị xóa trực tiếp khỏi <strong>Google Sheet</strong> và <strong>Current</strong>. Dữ liệu trong Kho chưa thay đổi cho đến khi bạn bấm <strong>Lưu vào Kho</strong>.</p>
 
                 <div class="confirm-details">
                     <div><span>Số tài</span><strong>@_deleteTarget.SoTai</strong></div>
@@ -311,13 +311,17 @@
             _rowBusy = true;
             if (_adding)
             {
-                await ShiftStore.AddCurrentRowAsync(Session.Area, _rowEditor);
-                _message = "Đã thêm dòng Current. Kho chưa thay đổi.";
+                var sourceRow = await GoogleShift.AddRowAsync(Session.Area, _rowEditor);
+                await ShiftStore.AddCurrentRowAsync(Session.Area, _rowEditor, sourceRow);
+                _message = $"Đã thêm dòng {sourceRow:N0} vào Google Sheet và đồng bộ Current. Kho chưa thay đổi.";
             }
             else
             {
+                var currentRow = _current?.Rows.FirstOrDefault(x => x.Id == _editId!.Value)
+                    ?? throw new InvalidOperationException("Không tìm thấy SourceRow của dòng cần sửa.");
+                await GoogleShift.UpdateRowAsync(Session.Area, currentRow.SourceRow, _rowEditor);
                 await ShiftStore.UpdateCurrentRowAsync(Session.Area, _editId!.Value, _rowEditor);
-                _message = "Đã cập nhật dòng Current. Kho chưa thay đổi.";
+                _message = $"Đã cập nhật dòng {currentRow.SourceRow:N0} trên Google Sheet và Current. Kho chưa thay đổi.";
             }
 
             _adding = false;
@@ -354,11 +358,12 @@
         try
         {
             _rowBusy = true;
+            await GoogleShift.DeleteRowAsync(target.SourceRow);
             await ShiftStore.DeleteCurrentRowAsync(Session.Area, target.Id);
             await DriverMatcher.RefreshCurrentTripAssignmentsAsync(Session.Area);
             _current = await ShiftStore.GetCurrentPageAsync(Session.Area, _current?.Page ?? 1, PageSize, _currentSearch);
             _deleteTarget = null;
-            _message = $"Đã xóa {target.SoTai} - {target.BienKiemSoat} khỏi Current. Kho chưa thay đổi.";
+            _message = $"Đã xóa dòng {target.SourceRow:N0} ({target.SoTai} - {target.BienKiemSoat}) khỏi Google Sheet và Current. Kho chưa thay đổi.";
         }
         catch (Exception ex)
         {

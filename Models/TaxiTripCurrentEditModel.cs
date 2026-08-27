@@ -1,4 +1,6 @@
+using DashChecker.Extensions;
 using DashChecker.Services;
+using System.Globalization;
 
 namespace DashChecker.Models;
 
@@ -34,4 +36,23 @@ public sealed class TaxiTripCurrentEditModel
         DiemDau = row.DiemDau,
         DiemCuoi = row.DiemCuoi
     };
+    /// <summary>
+    /// Map đúng 10 cột Google Sheet BÁO CÁO ĐỒNG HỒ: F..O.
+    /// F Số hiệu, G Biển số, H Bắt đầu, I Kết thúc, J KM có khách,
+    /// K KM rỗng, L Tổng KM, M Thành tiền, N Điểm đầu, O Điểm cuối.
+    /// </summary>
+    public IReadOnlyList<object?> ToGoogleSheetValues() => new object?[]
+    {
+        SoHieu,
+        BienSo,
+        BatDau.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture),
+        KetThuc.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture),
+        KmCoKhach.ltvFormatKm(),
+        KmRong.ltvFormatKm(),
+        TongKm.ltvFormatKm(),
+        ThanhTien,
+        DiemDau,
+        DiemCuoi
+    };
+
 }

@@ -2,6 +2,7 @@
 @inject SkySoftReportService SkySoft
 @inject TaxiTripStoreService TripStore
 @inject TripDriverMatcherService DriverMatcher
+@inject IGgsCheckerServer GgsChecker
 @inject AppSessionService Session
 @inject NavigationManager Navigation
 @implements IDisposable
@@ -60,6 +61,16 @@
                             else
                             {
                                 <span>✓</span><span>Chốt & Lưu Kho</span>
+                            }
+                        </button>
+                        <button class="btn secondary" @onclick="SaveGoogleSheetAsync" disabled="@(HasPendingEdit || _current.TotalRows == 0)">
+                            @if (_savingGoogleSheet)
+                            {
+                                <span class="spinner"></span><span>Đang lưu GoogleSheet</span>
+                            }
+                            else
+                            {
+                                <span>⇧</span><span>Lưu GoogleSheet</span>
                             }
                         </button>
                     }
@@ -210,7 +221,7 @@
 
 @code {
     private const int PageSize = 100;
-    private bool _updating, _saving, _loadingData, _showSaveConfirm, _rowBusy, _adding;
+    private bool _updating, _saving, _savingGoogleSheet, _loadingData, _showSaveConfirm, _rowBusy, _adding;
     private long? _editId;
     private TaxiTripListItem? _deleteTarget;
     private TaxiTripCurrentEditModel _rowEditor = TaxiTripCurrentEditModel.CreateNew();
@@ -229,7 +240,7 @@
         new("DiemDau", "Điểm đi"), new("DiemCuoi", "Điểm đến"), new("CreatedAt", "Thời gian tạo")
     ];
 
-    private bool HasPendingEdit => _updating || _saving || _rowBusy || _adding || _editId.HasValue || _deleteTarget is not null;
+    private bool HasPendingEdit => _updating || _saving || _savingGoogleSheet || _rowBusy || _adding || _editId.HasValue || _deleteTarget is not null;
     private bool Show(string key) => _columns.First(x => x.Key == key).Visible;
 
     protected override async Task OnInitializedAsync()
@@ -476,6 +487,44 @@
         finally { _saving = false; }
     }
 
+    private async Task SaveGoogleSheetAsync()
+    {
+        if (Session.Area is null || _current is null || HasPendingEdit)
+            return;
+
+        try
+        {
+            _savingGoogleSheet = true;
+            _message = _error = null;
+
+            // Luôn lấy toàn bộ Current, không phụ thuộc trang hiện tại hoặc ô tìm kiếm trên UI.
+            var rows = await TripStore.GetAllCurrentRowsAsync(Session.Area);
+            if (rows.Count == 0)
+            {
+                _error = "Current chưa có dữ liệu để lưu GoogleSheet.";
+                return;
+            }
+
+            // TaxiTripListItem -> TaxiTripCurrentEditModel.From(row) -> đúng 10 cột F:O.
+            var googleRows = rows
+                .Select(row => TaxiTripCurrentEditModel.From(row).ToGoogleSheetValues())
+                .ToList();
+
+            var result = await GgsChecker.AddRangeAsync(googleRows);
+            _message =
+                $"Đã lưu {result.Count:N0} cuốc lên GoogleSheet " +
+                $"BÁO CÁO ĐỒNG HỒ, vùng F{result.StartRow}:O{result.EndRow}.";
+        }
+        catch (Exception ex)
+        {
+            _error = $"Lưu GoogleSheet thất bại: {ex.Message}";
+        }
+        finally
+        {
+            _savingGoogleSheet = false;
+        }
+    }
+
     private async Task LoadAllAreaDataAsync()
     {
         if (Session.Area is null) return;
@@ -506,7 +555,7 @@
     private async Task ArchiveNextAsync() { if (Session.Area is not null && _archive is not null && _archive.Page < _archive.TotalPages) _archive = await TripStore.GetArchivePageAsync(Session.Area, _archive.Page + 1, PageSize, _archiveSearch); }
     private Task RefreshColumns() { StateHasChanged(); return Task.CompletedTask; }
 
-    private static string FormatMoney(decimal value) => $"{value:N0} đ";
+    private static string FormatMoney(decimal value) => $"{value.ltvVNDCurrency()} đ";
     private static string FormatKm(decimal value) => value.ToString("N3");
     private static string FormatDuration(TimeSpan duration) => duration.TotalHours >= 1 ? $"{(int)duration.TotalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}" : $"{duration.Minutes:00}:{duration.Seconds:00}";
 

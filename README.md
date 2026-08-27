@@ -20,8 +20,35 @@ Nguồn mặc định:
 
 Current ca lấy **ngày nguồn mới nhất** của đúng khu vực (BL hoặc VL). Khi bấm Cập nhật, chỉ Current bị thay thế. Khi bấm **Lưu vào Kho**, snapshot được lưu theo `AreaCode + SourceDate`; bấm lưu lại cùng ngày sẽ replace.
 
-### Google Sheet access
-DashChecker standalone đọc CSV export trực tiếp từ Google. File cần có quyền **Bất kỳ ai có đường liên kết - Người xem**. Nếu không muốn mở link công khai, thay `GoogleShiftService` bằng Google Sheets API + Service Account có quyền đọc file.
+### Google Sheet access + CRUD
+
+`QL_LEN_XUONG_CA` hỗ trợ đọc và CRUD trực tiếp qua Google Sheets API. SQLite vẫn là cache/Current của DashChecker; `Kho` vẫn chỉ thay đổi khi bấm **Lưu vào Kho**.
+
+- **Read**: nếu có Service Account thì đọc bằng Google Sheets API; nếu chưa cấu hình credential thì vẫn fallback CSV public như phiên bản cũ.
+- **Create / Update / Delete**: bắt buộc Service Account và Sheet phải chia sẻ quyền **Editor** cho email Service Account.
+- Sau khi xóa, DashChecker tự dịch `SourceRow` trong SQLite để các thao tác tiếp theo vẫn trỏ đúng dòng Google Sheet.
+
+Cấu hình khuyến nghị:
+
+```json
+"GoogleShift": {
+  "SpreadsheetId": "YOUR_SPREADSHEET_ID",
+  "Gid": 0,
+  "SheetName": "QL_LEN_XUONG_CA",
+  "TimeoutSeconds": 180,
+  "ServiceAccountJsonPath": "App_Data/google-service-account.json",
+  "ServiceAccountJson": "",
+  "ApplicationName": "DashChecker"
+}
+```
+
+Không commit file credential. `.gitignore` đã bỏ qua `App_Data/google-service-account*.json`. Có thể không dùng file và đặt JSON bằng User Secrets:
+
+```powershell
+dotnet user-secrets set "GoogleShift:ServiceAccountJson" "{...SERVICE_ACCOUNT_JSON...}"
+```
+
+Sau đó mở Google Sheet → **Share** → thêm email dạng `...@...iam.gserviceaccount.com` của Service Account → quyền **Editor**.
 
 ## SQLite
 `App_Data/skysoft-trips.db`
@@ -140,3 +167,11 @@ Mỗi module được tách theo khu vực đăng nhập và có hai vùng `Curr
 Current hỗ trợ thêm, sửa, lưu và xóa theo kiểu spreadsheet; `Lưu vào Kho` replace riêng snapshot của đúng module/khu vực. Tất cả cột dữ liệu có thể bật/tắt bằng `Cột hiển thị`; `CreatedAt` do hệ thống tự tạo khi thêm dòng.
 
 Dữ liệu 5 module dùng chung bảng SQLite `AppManagedRecords`, phân vùng bằng `AreaCode`, `ModuleKey` và `IsArchived` để việc bổ sung module mới sau này không phải nhân bản CRUD/database service.
+
+## Extension dùng chung
+
+Project có thêm `Libraries/Extensions/GoogleSheetExtension.cs` và `Libraries/Extensions/FormatCurrencyExtension.cs`.
+
+- `GoogleSheetExtension`: Get / Update / Batch Update / Clear / Append / Delete row cho Google Sheets API; đồng thời hỗ trợ đọc string, decimal, DateTime, TimeSpan, boolean và chuẩn hóa biển số từ `IList<object>`.
+- `FormatCurrencyExtension`: format tiền VND (`ltvVNDCurrency`, `ltvVNDCurrencyToDecimal`) và chuẩn hóa DateTime/ISO về giờ Việt Nam (`ltvFormatISODateTime`).
+- Namespace extension đã được import toàn cục cho Razor qua `Components/_Imports.razor`.

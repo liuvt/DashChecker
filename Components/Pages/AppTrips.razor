@@ -1,4 +1,5 @@
 @page "/app-trips"
+@using DashChecker.Extensions
 @inject SkySoftAppService OnlineApi
 @inject OnlineAppStoreService Store
 @inject TaxiTripStoreService TripStore
@@ -205,6 +206,6 @@
         finally { _loading = false; }
     }
 
-    private static string FormatMoney(decimal value) => $"{value:N0} đ";
+    private static string FormatMoney(decimal value) => $"{value.ltvVNDCurrency()} đ";
     public void Dispose() => Session.Changed -= OnSessionChanged;
 }

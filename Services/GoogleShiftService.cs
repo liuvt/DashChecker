@@ -1,6 +1,11 @@
 using System.Globalization;
+using Google.Apis.Auth.OAuth2;
+using Google.Apis.Services;
+using Google.Apis.Sheets.v4;
+using Google.Apis.Sheets.v4.Data;
 using Microsoft.Extensions.Options;
 using DashChecker.Models;
+using DashChecker.Extensions;
 
 namespace DashChecker.Services;
 
@@ -15,11 +20,17 @@ public sealed class GoogleShiftService
 
     private readonly HttpClient _httpClient;
     private readonly GoogleShiftOptions _options;
+    private readonly IWebHostEnvironment _environment;
+    private SheetsService? _sheetsService;
 
-    public GoogleShiftService(HttpClient httpClient, IOptions<GoogleShiftOptions> options)
+    public GoogleShiftService(
+        HttpClient httpClient,
+        IOptions<GoogleShiftOptions> options,
+        IWebHostEnvironment environment)
     {
         _httpClient = httpClient;
         _options = options.Value;
+        _environment = environment;
         _httpClient.Timeout = TimeSpan.FromSeconds(Math.Clamp(_options.TimeoutSeconds, 30, 600));
     }
 
@@ -27,10 +38,94 @@ public sealed class GoogleShiftService
         AreaContext area,
         CancellationToken cancellationToken = default)
     {
-        var spreadsheetId = _options.SpreadsheetId.Trim();
-        if (string.IsNullOrWhiteSpace(spreadsheetId))
-            throw new InvalidOperationException("Chưa cấu hình GoogleShift:SpreadsheetId.");
+        ValidateSpreadsheetConfiguration();
 
+        // Nếu đã có Service Account thì đọc bằng API để Sheet có thể để Private.
+        // Nếu chưa có thì giữ tương thích với cơ chế CSV public của project cũ.
+        if (HasServiceAccountConfiguration())
+        {
+            var service = GetSheetsService(requireWriteAccess: false);
+            var range = $"'{EscapeSheetName(GetSheetName())}'!A:ZZ";
+            var values = await service.ltvGetSheetValuesAsync(GetSpreadsheetId(), range, cancellationToken);
+            var rows = ToStringRows(values);
+            return ParseReport(area, rows);
+        }
+
+        return await FetchCurrentViaPublicCsvAsync(area, cancellationToken);
+    }
+
+    public async Task<int> AddRowAsync(
+        AreaContext area,
+        ShiftCurrentEditModel input,
+        CancellationToken cancellationToken = default)
+    {
+        var service = GetSheetsService(requireWriteAccess: true);
+        var headerMap = await GetHeaderMapAsync(service, cancellationToken);
+        var valuesByHeader = BuildSheetValues(area, input);
+
+        var width = Math.Max(headerMap.Values.Max() + 1, ExpectedHeaders.Length);
+        var row = Enumerable.Repeat<object>(string.Empty, width).ToList();
+        foreach (var (header, value) in valuesByHeader)
+            row[headerMap[header]] = value;
+
+        var body = new ValueRange { Values = new List<IList<object>> { row } };
+        var range = $"'{EscapeSheetName(GetSheetName())}'!A:ZZ";
+        var sourceRow = await service.ltvAppendSheetValuesAndGetRowAsync(
+            GetSpreadsheetId(), range, body, cancellationToken);
+        if (sourceRow <= 1)
+            throw new InvalidOperationException("Google Sheet đã nhận dữ liệu nhưng không xác định được số dòng vừa thêm. Hãy bấm Cập nhật Current để đồng bộ lại.");
+
+        return sourceRow;
+    }
+
+    public async Task UpdateRowAsync(
+        AreaContext area,
+        int sourceRow,
+        ShiftCurrentEditModel input,
+        CancellationToken cancellationToken = default)
+    {
+        if (sourceRow <= 1)
+            throw new InvalidOperationException("SourceRow Google Sheet không hợp lệ.");
+
+        var service = GetSheetsService(requireWriteAccess: true);
+        var headerMap = await GetHeaderMapAsync(service, cancellationToken);
+        var valuesByHeader = BuildSheetValues(area, input);
+        var sheetName = EscapeSheetName(GetSheetName());
+
+        var data = new List<ValueRange>();
+        foreach (var header in ExpectedHeaders)
+        {
+            var column = ColumnName(headerMap[header] + 1);
+            data.Add(new ValueRange
+            {
+                Range = $"'{sheetName}'!{column}{sourceRow}",
+                Values = new List<IList<object>> { new List<object> { valuesByHeader[header] } }
+            });
+        }
+
+        await service.ltvBatchUpdateSheetValuesAsync(GetSpreadsheetId(), data, cancellationToken);
+    }
+
+    public async Task DeleteRowAsync(
+        int sourceRow,
+        CancellationToken cancellationToken = default)
+    {
+        if (sourceRow <= 1)
+            throw new InvalidOperationException("Không thể xóa dòng tiêu đề hoặc SourceRow Google Sheet không hợp lệ.");
+
+        var service = GetSheetsService(requireWriteAccess: true);
+        await service.DeleteDimensionRequestAsync(
+            GetSpreadsheetId(),
+            GetSheetName(),
+            sourceRow - 1,
+            cancellationToken);
+    }
+
+    private async Task<ParsedShiftReport> FetchCurrentViaPublicCsvAsync(
+        AreaContext area,
+        CancellationToken cancellationToken)
+    {
+        var spreadsheetId = GetSpreadsheetId();
         var url = $"https://docs.google.com/spreadsheets/d/{Uri.EscapeDataString(spreadsheetId)}/export?format=csv&gid={_options.Gid}";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -47,11 +142,14 @@ public sealed class GoogleShiftService
             body.TrimStart().StartsWith("<html", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "Không đọc được Google Sheet QL_LEN_XUONG_CA. Hãy đặt quyền file là 'Bất kỳ ai có đường liên kết - Người xem' " +
-                "hoặc cấu hình nguồn Google Sheets có quyền truy cập cho máy chạy DashChecker.");
+                "Không đọc được Google Sheet QL_LEN_XUONG_CA. Hãy cấu hình Service Account hoặc đặt quyền file là 'Bất kỳ ai có đường liên kết - Người xem'.");
         }
 
-        var csvRows = ParseCsv(body);
+        return ParseReport(area, ParseCsv(body));
+    }
+
+    private ParsedShiftReport ParseReport(AreaContext area, List<string[]> csvRows)
+    {
         if (csvRows.Count < 2)
             throw new InvalidOperationException("Sheet QL_LEN_XUONG_CA không có dữ liệu.");
 
@@ -77,9 +175,10 @@ public sealed class GoogleShiftService
             }
 
             var sourceDateText = Cell("thoi_gian_tao");
-            if (!DateTime.TryParseExact(sourceDateText, "dd/MM/yyyy", CultureInfo.InvariantCulture,
-                    DateTimeStyles.None, out var sourceDate))
+            var parsedSourceDate = sourceDateText.ltvStringToDateTime(CultureInfo.InvariantCulture);
+            if (!parsedSourceDate.HasValue)
                 continue;
+            var sourceDate = parsedSourceDate.Value;
 
             var soTai = Cell("so_tai");
             var rawDriver = Cell("hoten_msnv");
@@ -89,8 +188,7 @@ public sealed class GoogleShiftService
                 continue;
 
             var timeText = Cell("thoi_gian");
-            if (!TimeSpan.TryParseExact(timeText, @"hh\:mm\:ss", CultureInfo.InvariantCulture, out var sourceTime))
-                sourceTime = TimeSpan.Zero;
+            var sourceTime = timeText.ltvStringToTimeSpan() ?? TimeSpan.Zero;
 
             var status = Cell("trangthai_len_xuong_ca");
             var plate = Cell("bien_kiem_soat");
@@ -122,7 +220,6 @@ public sealed class GoogleShiftService
         if (parsed.Count == 0)
             throw new InvalidOperationException($"Không tìm thấy dữ liệu khu vực {area.AreaName} trong QL_LEN_XUONG_CA.");
 
-        // Current chỉ lấy snapshot ngày mới nhất có trong sheet của đúng khu vực.
         var latestSourceDate = parsed.Max(x => x.SourceDate).Date;
         var currentRows = parsed
             .Where(x => x.SourceDate.Date == latestSourceDate)
@@ -132,12 +229,159 @@ public sealed class GoogleShiftService
             .ThenBy(x => x.SourceRow)
             .ToList();
 
-        return new ParsedShiftReport(
-            spreadsheetId,
-            string.IsNullOrWhiteSpace(_options.SheetName) ? "QL_LEN_XUONG_CA" : _options.SheetName,
-            latestSourceDate,
-            currentRows);
+        return new ParsedShiftReport(GetSpreadsheetId(), GetSheetName(), latestSourceDate, currentRows);
     }
+
+    private async Task<Dictionary<string, int>> GetHeaderMapAsync(
+        SheetsService service,
+        CancellationToken cancellationToken)
+    {
+        var range = $"'{EscapeSheetName(GetSheetName())}'!1:1";
+        var request = service.Spreadsheets.Values.Get(GetSpreadsheetId(), range);
+        var response = await request.ExecuteAsync(cancellationToken);
+        var header = response.Values?.FirstOrDefault()?.Select(x => x?.ToString()?.Trim() ?? string.Empty).ToArray()
+                     ?? Array.Empty<string>();
+
+        var map = ExpectedHeaders.ToDictionary(
+            h => h,
+            h => Array.FindIndex(header, x => string.Equals(x, h, StringComparison.OrdinalIgnoreCase)),
+            StringComparer.OrdinalIgnoreCase);
+
+        var missing = map.Where(x => x.Value < 0).Select(x => x.Key).ToArray();
+        if (missing.Length > 0)
+            throw new InvalidOperationException("QL_LEN_XUONG_CA thiếu cột: " + string.Join(", ", missing));
+
+        return map;
+    }
+
+    private Dictionary<string, string> BuildSheetValues(AreaContext area, ShiftCurrentEditModel input)
+    {
+        if (input.SourceDate == default)
+            throw new InvalidOperationException("Ngày ca không hợp lệ.");
+        if (!input.SourceTime.HasValue)
+            throw new InvalidOperationException("Vui lòng nhập thời gian lên/xuống ca.");
+
+        var soTai = input.SoTai?.Trim() ?? string.Empty;
+        var plate = input.BienKiemSoat?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(soTai) && string.IsNullOrWhiteSpace(plate))
+            throw new InvalidOperationException("Cần nhập ít nhất Số tài hoặc Biển kiểm soát.");
+
+        var rawDriver = input.HoTenMsnv?.Trim() ?? string.Empty;
+        var (_, employeeCode) = ParseDriver(rawDriver);
+        if (!string.IsNullOrWhiteSpace(soTai) || !string.IsNullOrWhiteSpace(employeeCode))
+        {
+            var belongs = soTai.StartsWith(area.AreaCode, StringComparison.OrdinalIgnoreCase) ||
+                          employeeCode.StartsWith(area.AreaCode, StringComparison.OrdinalIgnoreCase);
+            if (!belongs)
+                throw new InvalidOperationException($"Số tài/MSNV không thuộc khu vực {area.AreaName} ({area.AreaCode}).");
+        }
+
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["thoi_gian_tao"] = input.SourceDate.Date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
+            ["so_tai"] = soTai,
+            ["so_cho"] = input.SoCho?.Trim() ?? string.Empty,
+            ["bien_kiem_soat"] = plate,
+            ["hoten_msnv"] = rawDriver,
+            ["sdt_laixe"] = NormalizePhone(input.DriverPhone ?? string.Empty),
+            ["trangthai_len_xuong_ca"] = input.TrangThaiLenXuongCa?.Trim() ?? string.Empty,
+            ["loaihinh_hoptac"] = input.LoaiHinhHopTac?.Trim() ?? string.Empty,
+            ["hinhthuc_kinhdoanh"] = input.HinhThucKinhDoanh?.Trim() ?? string.Empty,
+            ["ly_do_xuong_ca"] = input.LyDoXuongCa?.Trim() ?? string.Empty,
+            ["ghi_chu"] = input.GhiChu?.Trim() ?? string.Empty,
+            ["thoi_gian"] = input.SourceTime.Value.ToString("HH:mm:ss", CultureInfo.InvariantCulture),
+            ["hinhthuc_luong"] = input.HinhThucLuong?.Trim() ?? string.Empty
+        };
+    }
+
+    private SheetsService GetSheetsService(bool requireWriteAccess)
+    {
+        if (_sheetsService is not null)
+            return _sheetsService;
+
+        if (!HasServiceAccountConfiguration())
+        {
+            var action = requireWriteAccess ? "Thêm/Sửa/Xóa" : "truy cập";
+            throw new InvalidOperationException(
+                $"Muốn {action} Google Sheet, hãy cấu hình GoogleShift:ServiceAccountJsonPath hoặc GoogleShift:ServiceAccountJson, " +
+                "sau đó chia sẻ file Google Sheet quyền Editor cho email Service Account.");
+        }
+
+        GoogleCredential credential;
+        if (!string.IsNullOrWhiteSpace(_options.ServiceAccountJson))
+        {
+            credential = GoogleCredential.FromJson(_options.ServiceAccountJson);
+        }
+        else
+        {
+            var path = ResolveCredentialPath(_options.ServiceAccountJsonPath);
+            if (!File.Exists(path))
+                throw new InvalidOperationException($"Không tìm thấy Google Service Account JSON tại: {path}");
+            credential = GoogleCredential.FromFile(path);
+        }
+
+        credential = credential.CreateScoped(SheetsService.Scope.Spreadsheets);
+        _sheetsService = new SheetsService(new BaseClientService.Initializer
+        {
+            HttpClientInitializer = credential,
+            ApplicationName = string.IsNullOrWhiteSpace(_options.ApplicationName) ? "DashChecker" : _options.ApplicationName
+        });
+
+        return _sheetsService;
+    }
+
+    private string ResolveCredentialPath(string configuredPath)
+    {
+        var path = configuredPath.Trim();
+        return Path.IsPathRooted(path)
+            ? path
+            : Path.GetFullPath(Path.Combine(_environment.ContentRootPath, path));
+    }
+
+    private bool HasServiceAccountConfiguration()
+        => !string.IsNullOrWhiteSpace(_options.ServiceAccountJson) ||
+           !string.IsNullOrWhiteSpace(_options.ServiceAccountJsonPath);
+
+    private void ValidateSpreadsheetConfiguration()
+    {
+        if (string.IsNullOrWhiteSpace(_options.SpreadsheetId))
+            throw new InvalidOperationException("Chưa cấu hình GoogleShift:SpreadsheetId.");
+        if (string.IsNullOrWhiteSpace(_options.SheetName))
+            throw new InvalidOperationException("Chưa cấu hình GoogleShift:SheetName.");
+    }
+
+    private string GetSpreadsheetId()
+    {
+        ValidateSpreadsheetConfiguration();
+        return _options.SpreadsheetId.Trim();
+    }
+
+    private string GetSheetName()
+    {
+        ValidateSpreadsheetConfiguration();
+        return _options.SheetName.Trim();
+    }
+
+    private static List<string[]> ToStringRows(IList<IList<object>>? values)
+    {
+        if (values is null) return new List<string[]>();
+        return values.Select(row => row.Select(x => x?.ToString() ?? string.Empty).ToArray()).ToList();
+    }
+
+    private static string ColumnName(int oneBasedColumn)
+    {
+        var value = oneBasedColumn;
+        var result = string.Empty;
+        while (value > 0)
+        {
+            value--;
+            result = (char)('A' + value % 26) + result;
+            value /= 26;
+        }
+        return result;
+    }
+
+    private static string EscapeSheetName(string name) => name.Replace("'", "''");
 
     private static DateTime BuildOperationalSourceAt(DateTime sourceDate, TimeSpan sourceTime)
         => sourceTime < TimeSpan.FromHours(5)
