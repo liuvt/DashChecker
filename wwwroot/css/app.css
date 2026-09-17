@@ -637,3 +637,15 @@ thead .control-col { z-index: 4; background: #f7f9fc; }
 .app-module-card strong { color: #26364d; font-size: 13px; }
 .app-module-card span { color: #8390a2; font-size: 10px; }
 .app-module-card b { color: #8a97a9; font-size: 17px; }
+
+/* Desktop: hiển thị */
+.report-title-desktop {
+    display: block;
+}
+
+/* Tablet trở xuống: ẩn */
+@media (max-width: 900px) {
+    .report-title-desktop {
+        display: none !important;
+    }
+}
