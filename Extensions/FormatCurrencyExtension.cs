@@ -129,8 +129,8 @@ public static class FormatCurrencyExtension
         return date.ToString();
     }
     /// <summary>
-    /// Làm tròn số KM tối đa 2 chữ số thập phân và hiển thị theo định dạng Việt Nam.
-    /// Ví dụ: 16,136 => 16,14; 16.136 => 16,14; 16 => 16.
+    /// Làm tròn số KM về đúng 2 chữ số thập phân và hiển thị theo định dạng Việt Nam.
+    /// Ví dụ: 16,136 => 16,14; 16.136 => 16,14; 16 => 16,00.
     /// </summary>
     public static string ltvFormatKm(this object? input)
     {
@@ -170,8 +170,8 @@ public static class FormatCurrencyExtension
 
             value = Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
-            // Tối đa 2 chữ số thập phân, dùng dấu phẩy theo vi-VN.
-            return value.ToString("0.##", viCulture);
+            // Luôn hiển thị đúng 2 chữ số thập phân, dùng dấu phẩy theo vi-VN.
+            return value.ToString("0.00", viCulture);
         }
         catch
         {

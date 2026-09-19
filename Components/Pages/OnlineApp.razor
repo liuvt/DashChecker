@@ -112,9 +112,9 @@
                                     <td><strong class="app-user">@trip.UserName</strong></td>
                                     <td>@trip.PickupDate.ToString("dd/MM/yyyy HH:mm:ss")</td>
                                     <td>@(trip.DropOffDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "")</td>
-                                    <td class="number-col">@trip.Km.ToString("N2")</td>
-                                    <td class="number-col empty-km">@trip.EmptyKm.ToString("N2")</td>
-                                    <td class="number-col total-km">@trip.TotalKm.ToString("N2")</td>
+                                    <td class="number-col">@trip.Km.ltvFormatKm()</td>
+                                    <td class="number-col empty-km">@trip.EmptyKm.ltvFormatKm()</td>
+                                    <td class="number-col total-km">@trip.TotalKm.ltvFormatKm()</td>
                                     <td class="number-col">@trip.WaitTimeMinutes.ToString("N2")</td>
                                     <td class="money-col">@FormatMoney(trip.Charge)</td>
                                     <td class="money-col">@FormatMoney(trip.RealCharge)</td>
@@ -204,5 +204,5 @@
         finally { _loadingTrips = false; }
     }
 
-    private static string FormatMoney(decimal value) => $"{value.ltvVNDCurrency()} đ";
+    private static string FormatMoney(decimal value) => value.ltvVNDCurrency();
 }

@@ -47,9 +47,9 @@ public sealed class TaxiTripCurrentEditModel
         BienSo,
         BatDau.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture),
         KetThuc.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture),
-        KmCoKhach.ltvFormatKm(),
-        KmRong.ltvFormatKm(),
-        TongKm.ltvFormatKm(),
+        Math.Round(KmCoKhach, 2, MidpointRounding.AwayFromZero).ltvFormatKm(),
+        Math.Round(KmRong, 2, MidpointRounding.AwayFromZero).ltvFormatKm(),
+        Math.Round(TongKm, 2, MidpointRounding.AwayFromZero).ltvFormatKm(),
         ThanhTien,
         DiemDau,
         DiemCuoi

@@ -68,9 +68,9 @@ public sealed class TaxiTripStoreService
             BienSo = trip.BienSo,
             BatDau = trip.BatDau,
             KetThuc = trip.KetThuc,
-            KmCoKhach = trip.KmCoKhach,
-            KmRong = trip.KmRong,
-            TongKm = trip.TongKm,
+            KmCoKhach = RoundKm(trip.KmCoKhach),
+            KmRong = RoundKm(trip.KmRong),
+            TongKm = RoundKm(trip.TongKm),
             ThanhTien = trip.ThanhTien,
             DiemDau = trip.DiemDau,
             DiemCuoi = trip.DiemCuoi,
@@ -180,9 +180,9 @@ public sealed class TaxiTripStoreService
             BienSo = x.BienSo,
             BatDau = x.BatDau,
             KetThuc = x.KetThuc,
-            KmCoKhach = x.KmCoKhach,
-            KmRong = x.KmRong,
-            TongKm = x.TongKm,
+            KmCoKhach = RoundKm(x.KmCoKhach),
+            KmRong = RoundKm(x.KmRong),
+            TongKm = RoundKm(x.TongKm),
             ThanhTien = x.ThanhTien,
             DiemDau = x.DiemDau,
             DiemCuoi = x.DiemCuoi,
@@ -413,9 +413,9 @@ public sealed class TaxiTripStoreService
         entity.BienSo = input.BienSo.Trim();
         entity.BatDau = input.BatDau;
         entity.KetThuc = input.KetThuc;
-        entity.KmCoKhach = input.KmCoKhach;
-        entity.KmRong = input.KmRong;
-        entity.TongKm = input.TongKm;
+        entity.KmCoKhach = RoundKm(input.KmCoKhach);
+        entity.KmRong = RoundKm(input.KmRong);
+        entity.TongKm = RoundKm(input.TongKm);
         entity.ThanhTien = input.ThanhTien;
         entity.DiemDau = input.DiemDau.Trim();
         entity.DiemCuoi = input.DiemCuoi.Trim();
@@ -616,4 +616,7 @@ public sealed class TaxiTripStoreService
         return new ArchiveTaxiTripPage(
             area.AreaCode, area.AreaName, rows, totalRows, page, pageSize, search);
     }
+    private static decimal RoundKm(decimal value) =>
+        Math.Round(value, 2, MidpointRounding.AwayFromZero);
+
 }

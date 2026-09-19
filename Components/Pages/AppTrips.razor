@@ -102,9 +102,9 @@
                                     @if (Show("UserName")) { <td><strong class="app-user">@trip.UserName</strong></td> }
                                     @if (Show("Pickup")) { <td>@trip.PickupDate.ToString("dd/MM/yyyy HH:mm:ss")</td> }
                                     @if (Show("DropOff")) { <td>@(trip.DropOffDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "")</td> }
-                                    @if (Show("Km")) { <td class="number-col">@trip.Km.ToString("N2")</td> }
-                                    @if (Show("EmptyKm")) { <td class="number-col empty-km">@trip.EmptyKm.ToString("N2")</td> }
-                                    @if (Show("TotalKm")) { <td class="number-col total-km">@trip.TotalKm.ToString("N2")</td> }
+                                    @if (Show("Km")) { <td class="number-col">@trip.Km.ltvFormatKm()</td> }
+                                    @if (Show("EmptyKm")) { <td class="number-col empty-km">@trip.EmptyKm.ltvFormatKm()</td> }
+                                    @if (Show("TotalKm")) { <td class="number-col total-km">@trip.TotalKm.ltvFormatKm()</td> }
                                     @if (Show("WaitTime")) { <td class="number-col">@trip.WaitTimeMinutes.ToString("N2")</td> }
                                     @if (Show("WaitCharge")) { <td class="money-col">@FormatMoney(trip.WaitCharge)</td> }
                                     @if (Show("Charge")) { <td class="money-col">@FormatMoney(trip.Charge)</td> }
@@ -206,6 +206,6 @@
         finally { _loading = false; }
     }
 
-    private static string FormatMoney(decimal value) => $"{value.ltvVNDCurrency()} đ";
+    private static string FormatMoney(decimal value) => value.ltvVNDCurrency();
     public void Dispose() => Session.Changed -= OnSessionChanged;
 }

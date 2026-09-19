@@ -202,9 +202,9 @@ public sealed class OnlineAppStoreService
             UserName = x.UserName,
             PickupDate = x.PickupDate,
             DropOffDate = x.DropOffDate,
-            Km = x.Km,
-            EmptyKm = x.EmptyKm,
-            TotalKm = x.TotalKm,
+            Km = RoundKm(x.Km),
+            EmptyKm = RoundKm(x.EmptyKm),
+            TotalKm = RoundKm(x.TotalKm),
             WaitTimeMinutes = x.WaitTimeMinutes,
             WaitCharge = x.WaitCharge,
             Charge = x.Charge,
@@ -257,9 +257,9 @@ public sealed class OnlineAppStoreService
             UserName = x.UserName,
             PickupDate = x.PickupDate,
             DropOffDate = x.DropOffDate,
-            Km = x.Km,
-            EmptyKm = x.EmptyKm,
-            TotalKm = x.TotalKm,
+            Km = RoundKm(x.Km),
+            EmptyKm = RoundKm(x.EmptyKm),
+            TotalKm = RoundKm(x.TotalKm),
             WaitTimeMinutes = x.WaitTimeMinutes,
             WaitCharge = x.WaitCharge,
             Charge = x.Charge,
@@ -366,4 +366,7 @@ public sealed class OnlineAppStoreService
         var toAt = (latestCreatedAt ?? VietnamClock.Now).Date.AddHours(5);
         return new AppTripSnapshot(area.AreaCode, latestCreatedAt, latestSavedAt, fromAt, toAt, rows, total, page, pageSize, search);
     }
+    private static decimal RoundKm(decimal value) =>
+        Math.Round(value, 2, MidpointRounding.AwayFromZero);
+
 }

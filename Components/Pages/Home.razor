@@ -235,7 +235,7 @@
     private readonly List<ColumnOption> _columns =
     [
         new("SoHieu", "Số hiệu"), new("BienSo", "Biển số"), new("BatDau", "Bắt đầu"),
-        new("KetThuc", "Kết thúc"), new("ThoiGian", "Thời gian"), new("KmCoKhach", "KM có khách"),
+        new("KetThuc", "Kết thúc"), new("KmCoKhach", "KM có khách"),
         new("KmRong", "KM rỗng"), new("TongKm", "Tổng KM"), new("ThanhTien", "Thành tiền"),
         new("DiemDau", "Điểm đi"), new("DiemCuoi", "Điểm đến"), new("CreatedAt", "Thời gian tạo")
     ];
@@ -281,7 +281,6 @@
                 @if (Show("BienSo")) { <th>Biển số</th> }
                 @if (Show("BatDau")) { <th>Bắt đầu</th> }
                 @if (Show("KetThuc")) { <th>Kết thúc</th> }
-                @if (Show("ThoiGian")) { <th>Thời gian</th> }
                 @if (Show("KmCoKhach")) { <th>KM có khách</th> }
                 @if (Show("KmRong")) { <th>KM rỗng</th> }
                 @if (Show("TongKm")) { <th>Tổng KM</th> }
@@ -305,7 +304,6 @@
                                 @if (Show("BienSo")) { <td><span class="plate-badge">@row.BienSo</span></td> }
                                 @if (Show("BatDau")) { <td class="date-cell">@row.BatDau.ToString("dd/MM/yyyy HH:mm:ss")</td> }
                                 @if (Show("KetThuc")) { <td class="date-cell">@row.KetThuc.ToString("dd/MM/yyyy HH:mm:ss")</td> }
-                                @if (Show("ThoiGian")) { <td class="duration-cell">@FormatDuration(row.ThoiLuong)</td> }
                                 @if (Show("KmCoKhach")) { <td class="number-col">@FormatKm(row.KmCoKhach)</td> }
                                 @if (Show("KmRong")) { <td class="number-col">@FormatKm(row.KmRong)</td> }
                                 @if (Show("TongKm")) { <td class="number-col total-km">@FormatKm(row.TongKm)</td> }
@@ -327,10 +325,9 @@
         @if (Show("BienSo")) { <td><input class="grid-input plate-input" @bind="_rowEditor.BienSo" /></td> }
         @if (Show("BatDau")) { <td><input class="grid-input datetime-input" type="datetime-local" step="1" @bind="_rowEditor.BatDau" /></td> }
         @if (Show("KetThuc")) { <td><input class="grid-input datetime-input" type="datetime-local" step="1" @bind="_rowEditor.KetThuc" /></td> }
-        @if (Show("ThoiGian")) { <td class="duration-cell">@FormatDuration(_rowEditor.KetThuc >= _rowEditor.BatDau ? _rowEditor.KetThuc - _rowEditor.BatDau : TimeSpan.Zero)</td> }
-        @if (Show("KmCoKhach")) { <td><input class="grid-input number-input" type="number" step="0.001" @bind="_rowEditor.KmCoKhach" /></td> }
-        @if (Show("KmRong")) { <td><input class="grid-input number-input" type="number" step="0.001" @bind="_rowEditor.KmRong" /></td> }
-        @if (Show("TongKm")) { <td><input class="grid-input number-input" type="number" step="0.001" @bind="_rowEditor.TongKm" /></td> }
+        @if (Show("KmCoKhach")) { <td><input class="grid-input number-input" type="number" step="0.01" @bind="_rowEditor.KmCoKhach" /></td> }
+        @if (Show("KmRong")) { <td><input class="grid-input number-input" type="number" step="0.01" @bind="_rowEditor.KmRong" /></td> }
+        @if (Show("TongKm")) { <td><input class="grid-input number-input" type="number" step="0.01" @bind="_rowEditor.TongKm" /></td> }
         @if (Show("ThanhTien")) { <td><input class="grid-input money-input" type="number" step="1" @bind="_rowEditor.ThanhTien" /></td> }
         @if (Show("DiemDau")) { <td><input class="grid-input place-input" @bind="_rowEditor.DiemDau" /></td> }
         @if (Show("DiemCuoi")) { <td><input class="grid-input place-input" @bind="_rowEditor.DiemCuoi" /></td> }
@@ -344,7 +341,6 @@
                 @if (Show("BienSo")) { <th>Biển số</th> }
                 @if (Show("BatDau")) { <th>Bắt đầu</th> }
                 @if (Show("KetThuc")) { <th>Kết thúc</th> }
-                @if (Show("ThoiGian")) { <th>Thời gian</th> }
                 @if (Show("KmCoKhach")) { <th>KM có khách</th> }
                 @if (Show("KmRong")) { <th>KM rỗng</th> }
                 @if (Show("TongKm")) { <th>Tổng KM</th> }
@@ -363,7 +359,6 @@
                             @if (Show("BienSo")) { <td><span class="plate-badge">@row.BienSo</span></td> }
                             @if (Show("BatDau")) { <td class="date-cell">@row.BatDau.ToString("dd/MM/yyyy HH:mm:ss")</td> }
                             @if (Show("KetThuc")) { <td class="date-cell">@row.KetThuc.ToString("dd/MM/yyyy HH:mm:ss")</td> }
-                            @if (Show("ThoiGian")) { <td class="duration-cell">@FormatDuration(row.ThoiLuong)</td> }
                             @if (Show("KmCoKhach")) { <td class="number-col">@FormatKm(row.KmCoKhach)</td> }
                             @if (Show("KmRong")) { <td class="number-col">@FormatKm(row.KmRong)</td> }
                             @if (Show("TongKm")) { <td class="number-col total-km">@FormatKm(row.TongKm)</td> }
@@ -555,8 +550,8 @@
     private async Task ArchiveNextAsync() { if (Session.Area is not null && _archive is not null && _archive.Page < _archive.TotalPages) _archive = await TripStore.GetArchivePageAsync(Session.Area, _archive.Page + 1, PageSize, _archiveSearch); }
     private Task RefreshColumns() { StateHasChanged(); return Task.CompletedTask; }
 
-    private static string FormatMoney(decimal value) => $"{value.ltvVNDCurrency()} đ";
-    private static string FormatKm(decimal value) => value.ToString("N3");
+    private static string FormatMoney(decimal value) => value.ltvVNDCurrency();
+    private static string FormatKm(decimal value) => value.ltvFormatKm();
     private static string FormatDuration(TimeSpan duration) => duration.TotalHours >= 1 ? $"{(int)duration.TotalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}" : $"{duration.Minutes:00}:{duration.Seconds:00}";
 
     public void Dispose() => Session.Changed -= OnSessionChanged;

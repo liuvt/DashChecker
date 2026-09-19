@@ -429,9 +429,9 @@ public sealed class SkySoftReportService : IDisposable
                 continue;
             }
 
-            var kmCoKhach = ExcelDecimal(row[columnMap["KM có khách"]], 3);
-            var kmRong = ExcelDecimal(row[columnMap["KM rỗng"]], 3);
-            var tongKm = ExcelDecimal(row[columnMap["Tổng KM"]], 3);
+            var kmCoKhach = ExcelDecimal(row[columnMap["KM có khách"]], 2);
+            var kmRong = ExcelDecimal(row[columnMap["KM rỗng"]], 2);
+            var tongKm = ExcelDecimal(row[columnMap["Tổng KM"]], 2);
             var thanhTien = ExcelDecimal(row[columnMap["Thành tiền"]], 0);
             var diemDau = CellText(row, columnMap["Điểm đầu"]);
             var diemCuoi = CellText(row, columnMap["Điểm cuối"]);
