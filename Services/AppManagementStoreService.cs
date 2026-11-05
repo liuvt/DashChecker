@@ -41,6 +41,94 @@ public sealed class AppManagementStoreService(IDbContextFactory<LocalDbContext> 
             total, page, pageSize, search, archive);
     }
 
+    public async Task<List<AppManagedRowView>> GetAllAsync(
+        AreaContext area,
+        string moduleKey,
+        bool archive = false,
+        string? search = null,
+        CancellationToken cancellationToken = default)
+    {
+        search = search?.Trim() ?? string.Empty;
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var query = db.AppManagedRecords.AsNoTracking()
+            .Where(x => x.AreaCode == area.AreaCode && x.ModuleKey == moduleKey && x.IsArchived == archive);
+
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(x => x.DataJson.Contains(search));
+
+        var rows = await query
+            .OrderBy(x => x.RowOrder)
+            .ThenBy(x => x.Id)
+            .Select(x => new { x.Id, x.RowOrder, x.DataJson, x.CreatedAt, x.SavedAt })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .Select(x => new AppManagedRowView(x.Id, x.RowOrder, AppManagedJson.Deserialize(x.DataJson), x.CreatedAt, x.SavedAt))
+            .ToList();
+    }
+
+    public async Task<int> ReplaceCurrentRowsAsync(
+        AreaContext area,
+        string moduleKey,
+        IReadOnlyList<IReadOnlyDictionary<string, string>> rows,
+        CancellationToken cancellationToken = default)
+    {
+        var now = VietnamClock.Now;
+        var dayStart = now.Date;
+        var dayEnd = dayStart.AddDays(1);
+
+        // Lọc trùng bản ghi nguồn trước khi ghi vào database local (tránh lưu chồng khi chạy 2 lần)
+        var deduped = rows
+            .GroupBy(values => BuildRowDedupKey(moduleKey, values), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last())
+            .ToList();
+
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        await db.AppManagedRecords
+            .Where(x => x.AreaCode == area.AreaCode &&
+                        x.ModuleKey == moduleKey &&
+                        !x.IsArchived &&
+                        (x.CreatedAt >= dayStart && x.CreatedAt < dayEnd || x.CreatedAt < dayEnd))
+            .ExecuteDeleteAsync(cancellationToken);
+
+        var entities = deduped.Select((values, idx) => new AppManagedRecord
+        {
+            AreaCode = area.AreaCode,
+            ModuleKey = moduleKey,
+            RowOrder = idx + 1,
+            DataJson = AppManagedJson.Serialize(values),
+            CreatedAt = now,
+            IsArchived = false
+        }).ToList();
+
+        if (entities.Count > 0)
+        {
+            db.AppManagedRecords.AddRange(entities);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        await tx.CommitAsync(cancellationToken);
+        return entities.Count;
+    }
+
+    private static string BuildRowDedupKey(string moduleKey, IReadOnlyDictionary<string, string> values)
+    {
+        string GetVal(string key) => values.TryGetValue(key, out var v) ? (v ?? string.Empty).Trim() : string.Empty;
+
+        var idKey = moduleKey.ToLowerInvariant() switch
+        {
+            "customer-promo" => $"{GetVal("TripId")}|{GetVal("PartnerCode")}|{GetVal("DriverPhone")}",
+            "vnpay" => $"{GetVal("PartnerId")}|{GetVal("SystemId")}|{GetVal("TripOccurredAt")}",
+            "xanh-sm" => $"{GetVal("Id")}|{GetVal("Depot")}|{GetVal("BookingTime")}",
+            "contracts" => $"{GetVal("Id")}|{GetVal("Date")}|{GetVal("Time")}|{GetVal("VehicleNo")}",
+            _ => $"{GetVal("Id")}|{GetVal("VehicleNo")}|{GetVal("BookingTime")}"
+        };
+
+        return string.IsNullOrWhiteSpace(idKey.Replace("|", "")) ? AppManagedJson.Serialize(values) : idKey;
+    }
+
     public async Task<long> AddCurrentAsync(
         AreaContext area,
         string moduleKey,
@@ -108,12 +196,22 @@ public sealed class AppManagementStoreService(IDbContextFactory<LocalDbContext> 
             .OrderBy(x => x.RowOrder)
             .ToListAsync(cancellationToken);
 
-        var oldArchive = await db.AppManagedRecords
-            .Where(x => x.AreaCode == area.AreaCode && x.ModuleKey == moduleKey && x.IsArchived)
-            .ToListAsync(cancellationToken);
-        if (oldArchive.Count > 0) db.AppManagedRecords.RemoveRange(oldArchive);
+        if (current.Count == 0)
+            return 0;
 
+        // Kiểm tra ngày tạo (CreatedAt): nếu chạy 2 lần trong cùng ngày tạo thì xóa/cập nhật lại bản chốt của ngày đó, không lưu chồng
+        var createdDate = current.Max(x => x.CreatedAt).Date;
+        var nextDate = createdDate.AddDays(1);
         var savedAt = VietnamClock.Now;
+
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.AppManagedRecords
+            .Where(x => x.AreaCode == area.AreaCode &&
+                        x.ModuleKey == moduleKey &&
+                        x.IsArchived &&
+                        x.CreatedAt >= createdDate && x.CreatedAt < nextDate)
+            .ExecuteDeleteAsync(cancellationToken);
+
         foreach (var source in current)
         {
             db.AppManagedRecords.Add(new AppManagedRecord
@@ -129,6 +227,7 @@ public sealed class AppManagementStoreService(IDbContextFactory<LocalDbContext> 
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
         return current.Count;
     }
 }

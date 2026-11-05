@@ -37,7 +37,7 @@
             <div class="data-toolbar">
                 <div>
                     <h2>@Session.Area.AreaName · Danh sách lên xuống ca</h2>
-                    <p>Ghép tài xế với cuốc theo Số tài/Biển số và <strong>mốc lên ca hiệu lực</strong>.</p>
+                    <p>Ghép tài xế với cuốc theo Số tài/Biển số và <strong>mốc lên ca hiệu lực (24h HH:mm:ss)</strong>.</p>
                 </div>
                 <div class="toolbar-actions">
                     <button class="btn update" @onclick="UpdateAsync" disabled="@HasPendingRowEdit">
@@ -219,7 +219,7 @@
         new("SourceDate", "Ngày"), new("SoTai", "Số tài"), new("SoCho", "Số chỗ"), new("BienSo", "Biển số"),
         new("Driver", "Tài xế / MSNV"), new("Phone", "SĐT"), new("Status", "Trạng thái"), new("Duplicate", "Trùng xe"),
         new("Partner", "Loại hình hợp tác"), new("Business", "Hình thức KD"), new("Reason", "Lý do xuống ca"),
-        new("Note", "Ghi chú"), new("Time", "Mốc thời gian"), new("Salary", "Hình thức lương"),
+        new("Note", "Ghi chú"), new("Time", "Mốc thời gian (HH:mm:ss)"), new("Salary", "Hình thức lương"),
         new("CreatedAt", "CreatedAt"), new("SavedAt", "SavedAt")
     ];
 
@@ -425,7 +425,7 @@
                 <th style='@ColStyle("SourceDate")'>Ngày</th><th style='@ColStyle("SoTai")'>Số tài</th><th style='@ColStyle("SoCho")'>Số chỗ</th><th style='@ColStyle("BienSo")'>Biển số</th>
                 <th style='@ColStyle("Driver")' class="driver-col">Tài xế / MSNV</th><th style='@ColStyle("Phone")'>SĐT</th><th style='@ColStyle("Status")'>Trạng thái</th><th style='@ColStyle("Duplicate")'>Trùng xe</th>
                 <th style='@ColStyle("Partner")'>Loại hình hợp tác</th><th style='@ColStyle("Business")'>Hình thức KD</th><th style='@ColStyle("Reason")'>Lý do xuống ca</th><th style='@ColStyle("Note")' class="place-col">Ghi chú</th>
-                <th style='@ColStyle("Time")'>Mốc thời gian</th><th style='@ColStyle("Salary")'>Hình thức lương</th>
+                <th style='@ColStyle("Time")'>Mốc thời gian (HH:mm:ss)</th><th style='@ColStyle("Salary")'>Hình thức lương</th>
             </tr></thead>
             <tbody>
             @if (_adding) { @EditorRow("Thêm") }
@@ -445,7 +445,7 @@
                             <td style='@ColStyle("Duplicate")'>@DuplicateBadge(row.DriverCountForVehicle, row.RowCountForSoTai)</td>
                             <td style='@ColStyle("Partner")'>@row.LoaiHinhHopTac</td><td style='@ColStyle("Business")'>@row.HinhThucKinhDoanh</td><td style='@ColStyle("Reason")' title="@row.LyDoXuongCa">@row.LyDoXuongCa</td>
                             <td style='@ColStyle("Note")' class="place-col" title="@row.GhiChu">@row.GhiChu</td>
-                            <td style='@ColStyle("Time")'><strong>@row.SourceTime.ToString(@"hh\:mm\:ss")</strong><div class="driver-meta">@row.SourceAt.ToString("dd/MM HH:mm:ss")</div></td>
+                            <td style='@ColStyle("Time")'><strong>@row.SourceTime.ToString(@"hh\:mm\:ss")</strong><div class="driver-meta">@row.SourceAt.ToString("dd/MM/yyyy HH:mm:ss")</div></td>
                             <td style='@ColStyle("Salary")'>@row.HinhThucLuong</td>
                         </tr>
                     }
@@ -470,7 +470,7 @@
         <td style='@ColStyle("Business")'><input class="grid-input wide-input" @bind="_rowEditor.HinhThucKinhDoanh" /></td>
         <td style='@ColStyle("Reason")'><input class="grid-input wide-input" @bind="_rowEditor.LyDoXuongCa" /></td>
         <td style='@ColStyle("Note")'><input class="grid-input note-input" @bind="_rowEditor.GhiChu" /></td>
-        <td style='@ColStyle("Time")'><input class="grid-input time-input" type="time" step="1" @bind="_rowEditor.SourceTime" /><div class="driver-meta">Mốc phân cuốc</div></td>
+        <td style='@ColStyle("Time")'><input class="grid-input time-input time-24h-input" type="text" placeholder="HH:mm:ss" @bind="_rowEditor.SourceTimeText" /><div class="driver-meta">Mốc phân cuốc (24h HH:mm:ss)</div></td>
         <td style='@ColStyle("Salary")'><input class="grid-input wide-input" @bind="_rowEditor.HinhThucLuong" /></td>
     </tr>;
 
@@ -479,13 +479,13 @@
             <thead><tr>
                 <th style='@ColStyle("CreatedAt")'>CreatedAt</th><th style='@ColStyle("SavedAt")'>SavedAt</th><th style='@ColStyle("SourceDate")'>Ngày</th><th style='@ColStyle("SoTai")'>Số tài</th><th style='@ColStyle("SoCho")'>Số chỗ</th><th style='@ColStyle("BienSo")'>Biển số</th>
                 <th style='@ColStyle("Driver")' class="driver-col">Tài xế / MSNV</th><th style='@ColStyle("Phone")'>SĐT</th><th style='@ColStyle("Status")'>Trạng thái</th><th style='@ColStyle("Duplicate")'>Trùng xe</th>
-                <th style='@ColStyle("Partner")'>Loại hình hợp tác</th><th style='@ColStyle("Business")'>Hình thức KD</th><th style='@ColStyle("Reason")'>Lý do xuống ca</th><th style='@ColStyle("Note")' class="place-col">Ghi chú</th><th style='@ColStyle("Time")'>Mốc thời gian</th><th style='@ColStyle("Salary")'>Hình thức lương</th>
+                <th style='@ColStyle("Partner")'>Loại hình hợp tác</th><th style='@ColStyle("Business")'>Hình thức KD</th><th style='@ColStyle("Reason")'>Lý do xuống ca</th><th style='@ColStyle("Note")' class="place-col">Ghi chú</th><th style='@ColStyle("Time")'>Mốc thời gian (HH:mm:ss)</th><th style='@ColStyle("Salary")'>Hình thức lương</th>
             </tr></thead>
             <tbody>
             @foreach (var row in _archive!.Rows)
             {
                 <tr>
-                    <td style='@ColStyle("CreatedAt")' class="archive-date">@row.CreatedAt.ToString("dd/MM/yyyy HH:mm")</td><td style='@ColStyle("SavedAt")'>@row.SavedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                    <td style='@ColStyle("CreatedAt")' class="archive-date">@row.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</td><td style='@ColStyle("SavedAt")'>@row.SavedAt.ToString("dd/MM/yyyy HH:mm:ss")</td>
                     <td style='@ColStyle("SourceDate")'>@row.SourceDate.ToString("dd/MM/yyyy")</td>
                     <td style='@ColStyle("SoTai")'><span class="trip-code">@row.SoTai</span></td><td style='@ColStyle("SoCho")'>@row.SoCho</td><td style='@ColStyle("BienSo")'><span class="plate-badge">@row.BienKiemSoat</span></td>
                     <td style='@ColStyle("Driver")' class="driver-col"><div class="driver-main">@(string.IsNullOrWhiteSpace(row.DriverName) ? "—" : row.DriverName)</div><div class="driver-meta">@row.EmployeeCode</div></td>
@@ -493,7 +493,7 @@
                     <td style='@ColStyle("Duplicate")'>@DuplicateBadge(row.DriverCountForVehicle, row.RowCountForSoTai)</td>
                     <td style='@ColStyle("Partner")'>@row.LoaiHinhHopTac</td><td style='@ColStyle("Business")'>@row.HinhThucKinhDoanh</td><td style='@ColStyle("Reason")' title="@row.LyDoXuongCa">@row.LyDoXuongCa</td>
                     <td style='@ColStyle("Note")' class="place-col" title="@row.GhiChu">@row.GhiChu</td>
-                    <td style='@ColStyle("Time")'><strong>@row.SourceTime.ToString(@"hh\:mm\:ss")</strong><div class="driver-meta">@row.SourceAt.ToString("dd/MM HH:mm:ss")</div></td><td style='@ColStyle("Salary")'>@row.HinhThucLuong</td>
+                    <td style='@ColStyle("Time")'><strong>@row.SourceTime.ToString(@"hh\:mm\:ss")</strong><div class="driver-meta">@row.SourceAt.ToString("dd/MM/yyyy HH:mm:ss")</div></td><td style='@ColStyle("Salary")'>@row.HinhThucLuong</td>
                 </tr>
             }
             </tbody>

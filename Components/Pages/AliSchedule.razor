@@ -1,0 +1,51 @@
+@page "/ali-schedule"
+@using DashChecker.Models
+@using DashChecker.Servers
+@using DashChecker.Services
+@inject AliService Ali
+@inject AliWorkerService AliWorker
+@inject AliGgSheetServer AliSheetServer
+@inject AppSessionService Session
+@implements IDisposable
+
+<PageTitle>DashChecker - Chạy Ali (Hẹn giờ)</PageTitle>
+
+<div class="page-shell ali-schedule-page">
+    <section class="page-header compact-page-header">
+        <div>
+            <div class="eyebrow">VẬN HÀNH &amp; LIÊN KẾT • ALI AUTO-SYNC &amp; LOCAL SQLITE</div>
+            <h1>Chạy Ali (Hẹn giờ) — Lưu Database Cục bộ &amp; Google Sheet</h1>
+            <p>
+                Chạy hẹn giờ tự động <strong>1 lần hàng ngày</strong> theo mốc thời gian có sẵn hoặc <strong>Load dữ liệu trực tiếp</strong> từ <strong>Ali (admin.nhaxeviet.vn)</strong> lưu vào <strong>7 bảng SQLite cục bộ</strong>.
+                Chỉ khi bấm nút <strong>"⇧ Nhập vào Google Sheet"</strong> dữ liệu mới được đẩy lên Google Sheet.
+            </p>
+        </div>
+        <div class="status-group">
+            <span class="ali-worker-pill @(AliWorker.IsRunning ? "running" : "stopped")">
+                <span class="status-dot @(AliWorker.IsRunning ? "pulse" : "")"></span>
+                Hẹn giờ: @(AliWorker.IsRunning ? $"ĐANG CHẠY ({AliWorker.SelectedPresetKey})" : "ĐANG DỪNG")
+            </span>
+            <span class="area-pill">
+                Ali: @(Ali.IsConnected ? $"Connected ({Ali.ConnectedUserName})" : "Offline")
+            </span>
+        </div>
+    </section>
+
+    <AliIntegrationPanel ShowScheduler="true" DefaultTab="orders" />
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Ali.AuthChanged += OnStateChanged;
+        AliWorker.StatusChanged += OnStateChanged;
+    }
+
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Ali.AuthChanged -= OnStateChanged;
+        AliWorker.StatusChanged -= OnStateChanged;
+    }
+}

@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using DashChecker.Entities;
 
 namespace DashChecker.Data;
@@ -8,6 +8,10 @@ public sealed class LocalDbContext(DbContextOptions<LocalDbContext> options)
 {
     public DbSet<LocalCredential> LocalCredentials => Set<LocalCredential>();
     public DbSet<AreaAccount> AreaAccounts => Set<AreaAccount>();
+
+    // Quản lý Liên kết SkySoft (Multi-account Auth + API + Lọc trùng Biển số - Số hiệu).
+    public DbSet<SkySoftLinkAccount> SkySoftLinkAccounts => Set<SkySoftLinkAccount>();
+    public DbSet<SharedVehicleRegistry> SharedVehicleRegistries => Set<SharedVehicleRegistry>();
 
     // Legacy tables retained for one-time migration compatibility.
     public DbSet<TaxiTripSync> TaxiTripSyncs => Set<TaxiTripSync>();
@@ -38,6 +42,15 @@ public sealed class LocalDbContext(DbContextOptions<LocalDbContext> options)
     // Manual app-management tables (Current/Kho by module and area).
     public DbSet<AppManagedRecord> AppManagedRecords => Set<AppManagedRecord>();
 
+    // Ali (Ali - admin.nhaxeviet.vn) local SQLite tables (lưu cục bộ khi gọi API/hẹn giờ).
+    public DbSet<AliOrderRecord> AliOrders => Set<AliOrderRecord>();
+    public DbSet<AliPromoteRecord> AliPromotes => Set<AliPromoteRecord>();
+    public DbSet<AliCancelOrderRecord> AliCancelOrders => Set<AliCancelOrderRecord>();
+    public DbSet<AliSwitchboardRecord> AliSwitchboards => Set<AliSwitchboardRecord>();
+    public DbSet<AliPartnerGsmRecord> AliPartnerGsms => Set<AliPartnerGsmRecord>();
+    public DbSet<AliPartnerVnPayRecord> AliPartnerVnPays => Set<AliPartnerVnPayRecord>();
+    public DbSet<AliOnlineAppRecord> AliOnlineApps => Set<AliOnlineAppRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         var credential = modelBuilder.Entity<LocalCredential>();
@@ -55,6 +68,49 @@ public sealed class LocalDbContext(DbContextOptions<LocalDbContext> options)
         account.Property(x => x.UserName).HasMaxLength(200).IsRequired();
         account.Property(x => x.AreaCode).HasMaxLength(20).IsRequired();
         account.Property(x => x.AreaName).HasMaxLength(200).IsRequired();
+
+        var linkAccount = modelBuilder.Entity<SkySoftLinkAccount>();
+        linkAccount.ToTable("SkySoftLinkAccounts");
+        linkAccount.HasKey(x => x.Id);
+        linkAccount.HasIndex(x => x.AreaCode);
+        linkAccount.HasIndex(x => x.UserName);
+        linkAccount.Property(x => x.AreaCode).HasMaxLength(20).IsRequired();
+        linkAccount.Property(x => x.AreaName).HasMaxLength(200).IsRequired();
+        linkAccount.Property(x => x.AppBaseUrl).HasMaxLength(500).IsRequired();
+        linkAccount.Property(x => x.UserName).HasMaxLength(200).IsRequired();
+        linkAccount.Property(x => x.ProtectedPassword).HasMaxLength(4000).IsRequired();
+        linkAccount.Property(x => x.DeviceId).HasMaxLength(100).IsRequired();
+        linkAccount.Property(x => x.DeviceName).HasMaxLength(100).IsRequired();
+        linkAccount.Property(x => x.DeviceBrand).HasMaxLength(100).IsRequired();
+        linkAccount.Property(x => x.DeviceModel).HasMaxLength(100).IsRequired();
+        linkAccount.Property(x => x.AppOs).HasMaxLength(50).IsRequired();
+        linkAccount.Property(x => x.OsVersion).HasMaxLength(50).IsRequired();
+        linkAccount.Property(x => x.AppVersion).HasMaxLength(50).IsRequired();
+        linkAccount.Property(x => x.ApiBaseUrl).HasMaxLength(500).IsRequired();
+        linkAccount.Property(x => x.ApiUserName).HasMaxLength(200).IsRequired();
+        linkAccount.Property(x => x.ApiKey).HasMaxLength(500).IsRequired();
+        linkAccount.Property(x => x.ProtectedApiToken).HasMaxLength(4000).IsRequired();
+        linkAccount.Property(x => x.MinOccupiedKm).HasPrecision(18, 2);
+        linkAccount.Property(x => x.Notes).HasMaxLength(2000).IsRequired();
+        linkAccount.Property(x => x.LastStatusMessage).HasMaxLength(1000).IsRequired();
+
+        var sharedVehicle = modelBuilder.Entity<SharedVehicleRegistry>();
+        sharedVehicle.ToTable("SharedVehicleRegistries");
+        sharedVehicle.HasKey(x => x.Id);
+        sharedVehicle.HasIndex(x => x.VehicleKeyComposite).IsUnique();
+        sharedVehicle.HasIndex(x => x.PlateNoNormalized);
+        sharedVehicle.HasIndex(x => x.VehicleNoNormalized);
+        sharedVehicle.HasIndex(x => x.PrimaryAreaCode);
+        sharedVehicle.Property(x => x.PlateNo).HasMaxLength(50).IsRequired();
+        sharedVehicle.Property(x => x.PlateNoNormalized).HasMaxLength(50).IsRequired();
+        sharedVehicle.Property(x => x.VehicleNo).HasMaxLength(100).IsRequired();
+        sharedVehicle.Property(x => x.VehicleNoNormalized).HasMaxLength(100).IsRequired();
+        sharedVehicle.Property(x => x.VehicleKeyComposite).HasMaxLength(160).IsRequired();
+        sharedVehicle.Property(x => x.VehicleId).HasMaxLength(100).IsRequired();
+        sharedVehicle.Property(x => x.VehicleCode).HasMaxLength(100).IsRequired();
+        sharedVehicle.Property(x => x.PrimaryAreaCode).HasMaxLength(20).IsRequired();
+        sharedVehicle.Property(x => x.SourceAreas).HasMaxLength(200).IsRequired();
+        sharedVehicle.Property(x => x.ExcludeReason).HasMaxLength(500).IsRequired();
 
         // Legacy tables.
         var legacySync = modelBuilder.Entity<TaxiTripSync>();
@@ -251,6 +307,46 @@ public sealed class LocalDbContext(DbContextOptions<LocalDbContext> options)
         appManaged.Property(x => x.AreaCode).HasMaxLength(20).IsRequired();
         appManaged.Property(x => x.ModuleKey).HasMaxLength(60).IsRequired();
         appManaged.Property(x => x.DataJson).IsRequired();
+
+        var ntOrder = modelBuilder.Entity<AliOrderRecord>();
+        ntOrder.ToTable("AliOrders");
+        ntOrder.HasKey(x => x.Id);
+        ntOrder.HasIndex(x => x.RowOrder);
+        ntOrder.HasIndex(x => x.ProvinceName);
+
+        var ntPromote = modelBuilder.Entity<AliPromoteRecord>();
+        ntPromote.ToTable("AliPromotes");
+        ntPromote.HasKey(x => x.Id);
+        ntPromote.HasIndex(x => x.RowOrder);
+        ntPromote.HasIndex(x => x.ProvinceName);
+
+        var ntCancel = modelBuilder.Entity<AliCancelOrderRecord>();
+        ntCancel.ToTable("AliCancelOrders");
+        ntCancel.HasKey(x => x.Id);
+        ntCancel.HasIndex(x => x.RowOrder);
+        ntCancel.HasIndex(x => x.ProvinceName);
+
+        var ntSwitchboard = modelBuilder.Entity<AliSwitchboardRecord>();
+        ntSwitchboard.ToTable("AliSwitchboards");
+        ntSwitchboard.HasKey(x => x.Id);
+        ntSwitchboard.HasIndex(x => x.RowOrder);
+        ntSwitchboard.HasIndex(x => x.ProvinceName);
+
+        var ntGsm = modelBuilder.Entity<AliPartnerGsmRecord>();
+        ntGsm.ToTable("AliPartnerGsms");
+        ntGsm.HasKey(x => x.Id);
+        ntGsm.HasIndex(x => x.RowOrder);
+
+        var ntVnPay = modelBuilder.Entity<AliPartnerVnPayRecord>();
+        ntVnPay.ToTable("AliPartnerVnPays");
+        ntVnPay.HasKey(x => x.Id);
+        ntVnPay.HasIndex(x => x.RowOrder);
+
+        var ntOnline = modelBuilder.Entity<AliOnlineAppRecord>();
+        ntOnline.ToTable("AliOnlineApps");
+        ntOnline.HasKey(x => x.Id);
+        ntOnline.HasIndex(x => x.RowOrder);
+        ntOnline.HasIndex(x => x.ProvinceName);
     }
 
     private static void ConfigureOnlineVehicle<TEntity>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<TEntity> row)
@@ -316,3 +412,4 @@ public sealed class LocalDbContext(DbContextOptions<LocalDbContext> options)
         row.Property<string>("HinhThucLuong").HasMaxLength(200);
     }
 }
+

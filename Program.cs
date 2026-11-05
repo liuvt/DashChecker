@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.DataProtection;
+﻿using Microsoft.AspNetCore.DataProtection;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using MudBlazor.Services;
@@ -48,12 +48,16 @@ builder.Services.AddScoped<TaxiTripStoreService>();
 builder.Services.AddScoped<ShiftStoreService>();
 builder.Services.AddScoped<TripDriverMatcherService>();
 builder.Services.AddScoped<AppSessionService>();
+builder.Services.AddSingleton<SkySoftLinkService>();
 builder.Services.AddHttpClient<GoogleShiftService>();
 builder.Services.AddHttpClient<SkySoftAppService>();
 builder.Services.AddScoped<OnlineAppStoreService>();
 builder.Services.AddScoped<AppManagementStoreService>();
 // Một instance toàn app để khóa thao tác ghi F:O giữa nhiều Blazor circuit.
 builder.Services.AddSingleton<IGgsCheckerServer, GgsCheckerServer>();
+builder.Services.AddSingleton<AliGgSheetServer>();
+builder.Services.AddSingleton<AliService>();
+builder.Services.AddSingleton<AliWorkerService>();
 
 // Mỗi Blazor circuit có CookieContainer SkySoft riêng.
 builder.Services.AddScoped<SkySoftReportService>();
@@ -298,6 +302,206 @@ CREATE INDEX IF NOT EXISTS IX_AppManagedRecords_Area_Module_Archive_Order
 ON AppManagedRecords(AreaCode, ModuleKey, IsArchived, RowOrder);
 CREATE INDEX IF NOT EXISTS IX_AppManagedRecords_Area_Module_CreatedAt
 ON AppManagedRecords(AreaCode, ModuleKey, CreatedAt);
+
+CREATE TABLE IF NOT EXISTS SkySoftLinkAccounts (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    AreaCode TEXT NOT NULL,
+    AreaName TEXT NOT NULL,
+    AppBaseUrl TEXT NOT NULL DEFAULT 'https://go.skysoft.vn/',
+    UserName TEXT NOT NULL DEFAULT '',
+    ProtectedPassword TEXT NOT NULL DEFAULT '',
+    DeviceId TEXT NOT NULL DEFAULT '',
+    DeviceName TEXT NOT NULL DEFAULT 'chrome',
+    DeviceBrand TEXT NOT NULL DEFAULT 'Google Inc.',
+    DeviceModel TEXT NOT NULL DEFAULT '',
+    AppOs TEXT NOT NULL DEFAULT 'web',
+    OsVersion TEXT NOT NULL DEFAULT '',
+    AppVersion TEXT NOT NULL DEFAULT '1.0.58',
+    ApiBaseUrl TEXT NOT NULL DEFAULT 'https://data.skysoft.vn/rest/api/',
+    ApiUserName TEXT NOT NULL DEFAULT '',
+    ApiKey TEXT NOT NULL DEFAULT '',
+    ProtectedApiToken TEXT NOT NULL DEFAULT '',
+    TimeoutSeconds INTEGER NOT NULL DEFAULT 300,
+    MinOccupiedKm TEXT NOT NULL DEFAULT '19.49',
+    MatchToleranceMinutes INTEGER NOT NULL DEFAULT 15,
+    Notes TEXT NOT NULL DEFAULT '',
+    FilterCrossProvinceDuplicates INTEGER NOT NULL DEFAULT 1,
+    IsConnected INTEGER NOT NULL DEFAULT 0,
+    LastConnectedAt TEXT NULL,
+    LastStatusMessage TEXT NOT NULL DEFAULT 'Chưa kết nối',
+    UpdatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS IX_SkySoftLinkAccounts_AreaCode ON SkySoftLinkAccounts(AreaCode);
+CREATE INDEX IF NOT EXISTS IX_SkySoftLinkAccounts_UserName ON SkySoftLinkAccounts(UserName);
+
+CREATE TABLE IF NOT EXISTS SharedVehicleRegistries (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    PlateNo TEXT NOT NULL,
+    PlateNoNormalized TEXT NOT NULL,
+    VehicleNo TEXT NOT NULL,
+    VehicleNoNormalized TEXT NOT NULL,
+    VehicleKeyComposite TEXT NOT NULL,
+    VehicleId TEXT NOT NULL DEFAULT '',
+    VehicleCode TEXT NOT NULL DEFAULT '',
+    PrimaryAreaCode TEXT NOT NULL DEFAULT '',
+    SourceAreas TEXT NOT NULL DEFAULT '',
+    DuplicateCount INTEGER NOT NULL DEFAULT 1,
+    GpsDate TEXT NULL,
+    UpdateDate TEXT NULL,
+    IsExcluded INTEGER NOT NULL DEFAULT 0,
+    ExcludeReason TEXT NOT NULL DEFAULT '',
+    FetchedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS IX_SharedVehicleRegistries_VehicleKeyComposite ON SharedVehicleRegistries(VehicleKeyComposite);
+CREATE INDEX IF NOT EXISTS IX_SharedVehicleRegistries_PlateNoNormalized ON SharedVehicleRegistries(PlateNoNormalized);
+CREATE INDEX IF NOT EXISTS IX_SharedVehicleRegistries_VehicleNoNormalized ON SharedVehicleRegistries(VehicleNoNormalized);
+CREATE INDEX IF NOT EXISTS IX_SharedVehicleRegistries_PrimaryAreaCode ON SharedVehicleRegistries(PrimaryAreaCode);
+
+CREATE TABLE IF NOT EXISTS AliOrders (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    RowOrder INTEGER NOT NULL DEFAULT 0,
+    OrderId TEXT NOT NULL DEFAULT '',
+    CustomerPhoneNumber TEXT NOT NULL DEFAULT '',
+    CustomerFullName TEXT NOT NULL DEFAULT '',
+    Status TEXT NOT NULL DEFAULT '',
+    Distance TEXT NOT NULL DEFAULT '',
+    DriverPhoneNumber TEXT NOT NULL DEFAULT '',
+    DriveNo TEXT NOT NULL DEFAULT '',
+    Price TEXT NOT NULL DEFAULT '',
+    Location TEXT NOT NULL DEFAULT '',
+    BookingTime TEXT NOT NULL DEFAULT '',
+    Note TEXT NOT NULL DEFAULT '',
+    ProvinceName TEXT NOT NULL DEFAULT '',
+    CreatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS IX_AliOrders_RowOrder ON AliOrders(RowOrder);
+CREATE INDEX IF NOT EXISTS IX_AliOrders_ProvinceName ON AliOrders(ProvinceName);
+
+CREATE TABLE IF NOT EXISTS AliPromotes (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    RowOrder INTEGER NOT NULL DEFAULT 0,
+    PromoteId TEXT NOT NULL DEFAULT '',
+    PartnerCode TEXT NOT NULL DEFAULT '',
+    DriverPhoneNumber TEXT NOT NULL DEFAULT '',
+    PriceTrip TEXT NOT NULL DEFAULT '',
+    PromotionPrice TEXT NOT NULL DEFAULT '',
+    VoucherPrice TEXT NOT NULL DEFAULT '',
+    ReturnDiscount TEXT NOT NULL DEFAULT '',
+    ExtraFee TEXT NOT NULL DEFAULT '',
+    CustomerPay TEXT NOT NULL DEFAULT '',
+    PaymentMethod TEXT NOT NULL DEFAULT '',
+    SourceCreatedAt TEXT NOT NULL DEFAULT '',
+    ProvinceName TEXT NOT NULL DEFAULT '',
+    CreatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS IX_AliPromotes_RowOrder ON AliPromotes(RowOrder);
+CREATE INDEX IF NOT EXISTS IX_AliPromotes_ProvinceName ON AliPromotes(ProvinceName);
+
+CREATE TABLE IF NOT EXISTS AliCancelOrders (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    RowOrder INTEGER NOT NULL DEFAULT 0,
+    OrderId TEXT NOT NULL DEFAULT '',
+    CustomerPhoneNumber TEXT NOT NULL DEFAULT '',
+    CustomerFullName TEXT NOT NULL DEFAULT '',
+    Status TEXT NOT NULL DEFAULT '',
+    Distance TEXT NOT NULL DEFAULT '',
+    DriverPhoneNumber TEXT NOT NULL DEFAULT '',
+    DriveNo TEXT NOT NULL DEFAULT '',
+    Price TEXT NOT NULL DEFAULT '',
+    Location TEXT NOT NULL DEFAULT '',
+    BookingTime TEXT NOT NULL DEFAULT '',
+    Note TEXT NOT NULL DEFAULT '',
+    Type TEXT NOT NULL DEFAULT '',
+    ProvinceName TEXT NOT NULL DEFAULT '',
+    CreatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS IX_AliCancelOrders_RowOrder ON AliCancelOrders(RowOrder);
+CREATE INDEX IF NOT EXISTS IX_AliCancelOrders_ProvinceName ON AliCancelOrders(ProvinceName);
+
+CREATE TABLE IF NOT EXISTS AliSwitchboards (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    RowOrder INTEGER NOT NULL DEFAULT 0,
+    OrderId TEXT NOT NULL DEFAULT '',
+    CustomerPhoneNumber TEXT NOT NULL DEFAULT '',
+    CustomerFullName TEXT NOT NULL DEFAULT '',
+    Status TEXT NOT NULL DEFAULT '',
+    Distance TEXT NOT NULL DEFAULT '',
+    DriverPhoneNumber TEXT NOT NULL DEFAULT '',
+    DriveNo TEXT NOT NULL DEFAULT '',
+    Price TEXT NOT NULL DEFAULT '',
+    Location TEXT NOT NULL DEFAULT '',
+    BookingTime TEXT NOT NULL DEFAULT '',
+    Note TEXT NOT NULL DEFAULT '',
+    ProvinceName TEXT NOT NULL DEFAULT '',
+    CreatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS IX_AliSwitchboards_RowOrder ON AliSwitchboards(RowOrder);
+CREATE INDEX IF NOT EXISTS IX_AliSwitchboards_ProvinceName ON AliSwitchboards(ProvinceName);
+
+CREATE TABLE IF NOT EXISTS AliPartnerGsms (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    RowOrder INTEGER NOT NULL DEFAULT 0,
+    IdPartner TEXT NOT NULL DEFAULT '',
+    IdAli TEXT NOT NULL DEFAULT '',
+    TripTime TEXT NOT NULL DEFAULT '',
+    CustomerPhoneNumber TEXT NOT NULL DEFAULT '',
+    CustomerFullName TEXT NOT NULL DEFAULT '',
+    Distance TEXT NOT NULL DEFAULT '',
+    Price TEXT NOT NULL DEFAULT '',
+    PaymentMethod TEXT NOT NULL DEFAULT '',
+    PaymentStatus TEXT NOT NULL DEFAULT '',
+    DriverPhoneNumber TEXT NOT NULL DEFAULT '',
+    DriverId TEXT NOT NULL DEFAULT '',
+    DriveNo TEXT NOT NULL DEFAULT '',
+    TripStatus TEXT NOT NULL DEFAULT '',
+    PickupLocation TEXT NOT NULL DEFAULT '',
+    DropoffLocation TEXT NOT NULL DEFAULT '',
+    TypeService TEXT NOT NULL DEFAULT '',
+    CreatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS IX_AliPartnerGsms_RowOrder ON AliPartnerGsms(RowOrder);
+
+CREATE TABLE IF NOT EXISTS AliPartnerVnPays (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    RowOrder INTEGER NOT NULL DEFAULT 0,
+    IdDoiTac TEXT NOT NULL DEFAULT '',
+    IdCongTy TEXT NOT NULL DEFAULT '',
+    IdHeThong TEXT NOT NULL DEFAULT '',
+    ThoiDiemPhatSinhCuocDi TEXT NOT NULL DEFAULT '',
+    SdtKhachHang TEXT NOT NULL DEFAULT '',
+    TenKhachHang TEXT NOT NULL DEFAULT '',
+    QuangDuong TEXT NOT NULL DEFAULT '',
+    TienCuoc TEXT NOT NULL DEFAULT '',
+    HinhThucThanhToan TEXT NOT NULL DEFAULT '',
+    TrangThaiThanhToan TEXT NOT NULL DEFAULT '',
+    DienThoaiLaiXe TEXT NOT NULL DEFAULT '',
+    MaLaiXe TEXT NOT NULL DEFAULT '',
+    SoTai TEXT NOT NULL DEFAULT '',
+    BienSoXe TEXT NOT NULL DEFAULT '',
+    TrangThaiChuyenDi TEXT NOT NULL DEFAULT '',
+    DiemDon TEXT NOT NULL DEFAULT '',
+    DiemTra TEXT NOT NULL DEFAULT '',
+    DichVu TEXT NOT NULL DEFAULT '',
+    CreatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS IX_AliPartnerVnPays_RowOrder ON AliPartnerVnPays(RowOrder);
+
+CREATE TABLE IF NOT EXISTS AliOnlineApps (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    RowOrder INTEGER NOT NULL DEFAULT 0,
+    DriverRecordId TEXT NOT NULL DEFAULT '',
+    DriverName TEXT NOT NULL DEFAULT '',
+    DriverPhoneNumber TEXT NOT NULL DEFAULT '',
+    DriveNo TEXT NOT NULL DEFAULT '',
+    DrivePlate TEXT NOT NULL DEFAULT '',
+    Team TEXT NOT NULL DEFAULT '',
+    OnlineTime TEXT NOT NULL DEFAULT '',
+    ProvinceName TEXT NOT NULL DEFAULT '',
+    CreatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS IX_AliOnlineApps_RowOrder ON AliOnlineApps(RowOrder);
+CREATE INDEX IF NOT EXISTS IX_AliOnlineApps_ProvinceName ON AliOnlineApps(ProvinceName);
 " );
 
     // Nâng cấp database cũ: bổ sung cột ghép tài xế cho bảng cuốc mà không làm mất dữ liệu.
@@ -396,3 +600,4 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 app.Run();
+

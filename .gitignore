@@ -13,3 +13,6 @@ App_Data/google-service-account*.json
 
 # DashChecker Google Sheets service-account key
 App_Data/ggs-dashchecker-api.json
+
+App_Data/ali-ggsheetaccount.json
+App_Data/AliAuthentication.json

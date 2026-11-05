@@ -10,8 +10,7 @@ using Microsoft.Extensions.Options;
 namespace DashChecker.Servers;
 
 /// <summary>
-/// CRUD Google Sheet "BÁO CÁO ĐỒNG HỒ".
-/// Chỉ thao tác vùng F2:O của spreadsheet được cấu hình cố định bên dưới.
+/// CRUD Google Sheet "BÁO CÁO ĐỒNG HỒ" (vùng F2:O) và "GPS" (vùng A2:H).
 /// </summary>
 public sealed class GgsCheckerServer : IGgsCheckerServer, IDisposable
 {
@@ -20,6 +19,9 @@ public sealed class GgsCheckerServer : IGgsCheckerServer, IDisposable
     private const string StartColumn = "F";
     private const string EndColumn = "O";
 
+    private const int GpsColumnCount = 8;
+    private const string GpsStartColumn = "A";
+    private const string GpsEndColumn = "H";
 
     private readonly SheetsService _sheetsService;
     private readonly GgsDashCheckerOptions _options;
@@ -94,14 +96,14 @@ public sealed class GgsCheckerServer : IGgsCheckerServer, IDisposable
         {
             var targetRow = await GetNextAppendRowAsync(cancellationToken);
             var endRow = targetRow + rows.Count - 1;
-            await EnsureRowCapacityAsync(endRow, cancellationToken);
+            await EnsureRowCapacityAsync(_options.SpreadsheetId, _options.SheetName, endRow, createIfMissing: false, cancellationToken);
 
             // Không ghi đè nếu trong lúc xác định vị trí có dữ liệu/công thức mới phát sinh.
             while (await RangeHasDataAsync(targetRow, endRow, cancellationToken))
             {
                 targetRow = await GetNextAppendRowAsync(cancellationToken);
                 endRow = targetRow + rows.Count - 1;
-                await EnsureRowCapacityAsync(endRow, cancellationToken);
+                await EnsureRowCapacityAsync(_options.SpreadsheetId, _options.SheetName, endRow, createIfMissing: false, cancellationToken);
             }
 
             var values = rows
@@ -115,6 +117,65 @@ public sealed class GgsCheckerServer : IGgsCheckerServer, IDisposable
                 _options.SpreadsheetId, range, body, cancellationToken);
 
             return new GgsCheckerAppendResult(targetRow, endRow, rows.Count);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    public async Task<GgsCheckerAppendResult> ReplaceGpsSheetAsync(
+        IReadOnlyList<IReadOnlyList<object?>> rows,
+        string spreadsheetId = "1txl9y-tck1EwE3PKVbMIROQWZ__OK09RuJuCnpK-9q0",
+        string sheetName = "GPS",
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+
+        var targetSpreadsheetId = string.IsNullOrWhiteSpace(spreadsheetId)
+            ? "1txl9y-tck1EwE3PKVbMIROQWZ__OK09RuJuCnpK-9q0"
+            : spreadsheetId.Trim();
+        var targetSheetName = string.IsNullOrWhiteSpace(sheetName)
+            ? "GPS"
+            : sheetName.Trim();
+
+        await _writeLock.WaitAsync(cancellationToken);
+        try
+        {
+            var requiredLastRow = Math.Max(StartRow, StartRow + rows.Count - 1);
+            var actualSheetTitle = await EnsureRowCapacityAsync(
+                targetSpreadsheetId,
+                targetSheetName,
+                requiredLastRow,
+                createIfMissing: true,
+                cancellationToken);
+
+            // Bước 1: Xóa toàn bộ dữ liệu từ dòng thứ 2 trở xuống trên vùng A2:H
+            var clearRange = $"'{EscapeSheetName(actualSheetTitle)}'!{GpsStartColumn}{StartRow}:{GpsEndColumn}";
+            await _sheetsService.ltvClearSheetValuesAsync(
+                targetSpreadsheetId,
+                clearRange,
+                cancellationToken);
+
+            if (rows.Count == 0)
+                return new GgsCheckerAppendResult(StartRow, StartRow, 0);
+
+            // Bước 2: Dán dữ liệu mới từ dòng thứ 2 (A2:H{endRow})
+            var endRow = StartRow + rows.Count - 1;
+            var values = rows
+                .Select(row => (IList<object>)NormalizeValues(row, GpsColumnCount))
+                .ToList();
+
+            var body = new ValueRange { Values = values };
+            var writeRange = $"'{EscapeSheetName(actualSheetTitle)}'!{GpsStartColumn}{StartRow}:{GpsEndColumn}{endRow}";
+
+            await _sheetsService.UpdateSheetValuesAsync(
+                targetSpreadsheetId,
+                writeRange,
+                body,
+                cancellationToken);
+
+            return new GgsCheckerAppendResult(StartRow, endRow, rows.Count);
         }
         finally
         {
@@ -177,23 +238,78 @@ public sealed class GgsCheckerServer : IGgsCheckerServer, IDisposable
         }
     }
 
-    private async Task EnsureRowCapacityAsync(
+    private async Task<string> EnsureRowCapacityAsync(
+        string spreadsheetId,
+        string sheetName,
         int requiredLastRow,
+        bool createIfMissing,
         CancellationToken cancellationToken)
     {
-        var get = _sheetsService.Spreadsheets.Get(_options.SpreadsheetId);
+        var get = _sheetsService.Spreadsheets.Get(spreadsheetId);
         get.Fields = "sheets.properties(sheetId,title,gridProperties.rowCount)";
         var spreadsheet = await get.ExecuteAsync(cancellationToken);
 
         var sheet = spreadsheet.Sheets?.FirstOrDefault(x =>
-            string.Equals(x.Properties?.Title, _options.SheetName, StringComparison.OrdinalIgnoreCase));
+            string.Equals(x.Properties?.Title, sheetName, StringComparison.OrdinalIgnoreCase));
 
-        if (sheet?.Properties?.SheetId is not int sheetId)
-            throw new InvalidOperationException($"Không tìm thấy Sheet '{_options.SheetName}'.");
+        if (sheet is null)
+        {
+            if (!createIfMissing)
+                throw new InvalidOperationException($"Không tìm thấy Sheet '{sheetName}'.");
 
+            var addSheetBatch = new BatchUpdateSpreadsheetRequest
+            {
+                Requests = new List<Request>
+                {
+                    new()
+                    {
+                        AddSheet = new AddSheetRequest
+                        {
+                            Properties = new SheetProperties
+                            {
+                                Title = sheetName,
+                                GridProperties = new GridProperties
+                                {
+                                    RowCount = Math.Max(1000, requiredLastRow + 100),
+                                    ColumnCount = 26
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            await _sheetsService.Spreadsheets.BatchUpdate(addSheetBatch, spreadsheetId)
+                .ExecuteAsync(cancellationToken);
+
+            var headerBody = new ValueRange
+            {
+                Values = new List<IList<object>>
+                {
+                    new List<object>
+                    {
+                        "Vehicle ID", "Biển số", "Số tài", "Vehicle Code",
+                        "Tín hiệu GPS", "Thời gian tạo", "GPS Date", "Update Date"
+                    }
+                }
+            };
+
+            await _sheetsService.UpdateSheetValuesAsync(
+                spreadsheetId,
+                $"'{EscapeSheetName(sheetName)}'!A1:H1",
+                headerBody,
+                cancellationToken);
+
+            return sheetName;
+        }
+
+        if (sheet.Properties?.SheetId is not int sheetId)
+            throw new InvalidOperationException($"Không tìm thấy Sheet '{sheetName}'.");
+
+        var actualTitle = sheet.Properties.Title ?? sheetName;
         var currentRowCount = sheet.Properties.GridProperties?.RowCount ?? 0;
         if (requiredLastRow <= currentRowCount)
-            return;
+            return actualTitle;
 
         var body = new BatchUpdateSpreadsheetRequest
         {
@@ -211,8 +327,10 @@ public sealed class GgsCheckerServer : IGgsCheckerServer, IDisposable
             }
         };
 
-        await _sheetsService.Spreadsheets.BatchUpdate(body, _options.SpreadsheetId)
+        await _sheetsService.Spreadsheets.BatchUpdate(body, spreadsheetId)
             .ExecuteAsync(cancellationToken);
+
+        return actualTitle;
     }
 
     private async Task<int> GetNextAppendRowAsync(CancellationToken cancellationToken)
@@ -307,15 +425,15 @@ public sealed class GgsCheckerServer : IGgsCheckerServer, IDisposable
         => row is not null && row.Any(value =>
             value is not null && !string.IsNullOrWhiteSpace(value.ToString()));
 
-    private static List<object> NormalizeValues(IEnumerable<object?> values)
+    private static List<object> NormalizeValues(IEnumerable<object?> values, int targetColumnCount = ColumnCount)
     {
         var normalized = values
-            .Take(ColumnCount)
+            .Take(targetColumnCount)
             .Select(value => value ?? string.Empty)
             .Cast<object>()
             .ToList();
 
-        while (normalized.Count < ColumnCount)
+        while (normalized.Count < targetColumnCount)
             normalized.Add(string.Empty);
 
         return normalized;

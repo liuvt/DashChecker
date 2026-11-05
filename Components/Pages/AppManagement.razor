@@ -1,6 +1,11 @@
-@page "/app-management/{ModuleKey}"
+﻿@page "/app-management/{ModuleKey}"
+@using DashChecker.Extensions
+@using DashChecker.Models
+@using DashChecker.Servers
+@using DashChecker.Services
 @inject AppSessionService Session
 @inject AppManagementStoreService Store
+@inject AliGgSheetServer AliSheetServer
 @implements IDisposable
 
 <PageTitle>DashChecker - @Definition.Title</PageTitle>
@@ -10,7 +15,7 @@
         <div>
             <div class="eyebrow">DASHCHECKER • QUẢN LÝ APP</div>
             <h1>@Definition.Title</h1>
-            <p>Current là vùng chỉnh sửa trực tiếp. Thêm / Sửa / Xóa tại đây; bấm <strong>Lưu vào Kho</strong> để chốt riêng dữ liệu của @Definition.Title.</p>
+            <p>Current là vùng chỉnh sửa trực tiếp. Thêm / Sửa / Xóa tại đây; bấm <strong>Lưu vào Kho</strong> để chốt riêng dữ liệu của @Definition.Title hoặc đồng bộ với <strong>Ali &amp; Google Sheet</strong>.</p>
         </div>
         @if (Session.Area is not null)
         {
@@ -24,7 +29,7 @@
             <div class="empty-state login-required">
                 <div class="empty-icon">▦</div>
                 <strong>Chưa xác định khu vực</strong>
-                <span>Đăng nhập tài khoản khu vực ở thanh điều hướng bên trái để quản lý dữ liệu App.</span>
+                <span>Đăng nhập tài khoản khu vực ở thanh điều hướng bên trái để quản lý dữ liệu bảng Current &amp; Kho lưu trữ nội bộ.</span>
             </div>
         </section>
     }
@@ -44,6 +49,25 @@
                         </button>
                         <button class="btn save" @onclick="() => _confirmArchive = true" disabled="@HasPendingEdit">
                             <span>✓</span><span>Lưu vào Kho</span>
+                        </button>
+                    }
+                    @if (SupportsAliIntegration)
+                    {
+                        <NavLink class="btn secondary" href="/ali-schedule">
+                            <span>⏱</span><span>Chạy Ali (Hẹn giờ &amp; Load dữ liệu)</span>
+                        </NavLink>
+                    }
+                    @if (SupportsAliGoogleSheet)
+                    {
+                        <button class="btn gsheet-btn" @onclick="ExportLocalTableToGoogleSheetAsync" disabled="@(HasPendingEdit || _exportingSheet || ActiveTotalRows == 0)">
+                            @if (_exportingSheet)
+                            {
+                                <span class="spinner"></span><span>Đang ghi Sheet...</span>
+                            }
+                            else
+                            {
+                                <span>⇧</span><span>Ghi bảng đang lọc vào Google Sheet</span>
+                            }
                         </button>
                     }
                 </div>
@@ -133,7 +157,7 @@
                     <button class="btn secondary" @onclick="() => _confirmArchive = false" disabled="@_saving">Hủy</button>
                     <button class="btn save" @onclick="SaveArchiveAsync" disabled="@_saving">
                         @if (_saving) { <span class="spinner"></span> }
-                        <span>Chốt & Lưu Kho</span>
+                        <span>Chốt &amp; Lưu Kho</span>
                     </button>
                 </div>
             </div>
@@ -151,6 +175,7 @@
     private bool _loading;
     private bool _rowBusy;
     private bool _saving;
+    private bool _exportingSheet;
     private bool _adding;
     private bool _confirmArchive;
     private long? _editingId;
@@ -163,9 +188,12 @@
     private AppManagedSnapshot? _archive;
     private readonly List<ColumnOption> _columns = [];
 
-    private bool HasPendingEdit => _adding || _editingId.HasValue || _rowBusy || _saving;
+    private bool HasPendingEdit => _adding || _editingId.HasValue || _rowBusy || _saving || _exportingSheet;
     private int ActiveTotalRows => _activeTab == "current" ? _current?.TotalRows ?? 0 : _archive?.TotalRows ?? 0;
     private bool Show(string key) => _columns.FirstOrDefault(x => x.Key == key)?.Visible ?? true;
+
+    private bool SupportsAliIntegration => Definition.Key is "Ali" or "customer-app" or "customer-promo" or "vnpay" or "xanh-sm";
+    private bool SupportsAliGoogleSheet => Definition.Key is "Ali" or "customer-app" or "customer-promo" or "vnpay" or "xanh-sm";
 
     protected override void OnInitialized()
     {
@@ -235,7 +263,7 @@
                 {
                     if (!_adding)
                     {
-                        <tr><td colspan="@(VisibleColumnCount + 1)" class="empty-table-cell">Chưa có dữ liệu Current. Bấm “Thêm dòng” để nhập dữ liệu.</td></tr>
+                        <tr><td colspan="@(VisibleColumnCount + 1)" class="empty-table-cell">Chưa có dữ liệu Current. Bấm “Thêm dòng” hoặc nạp từ bộ điều khiển Ali phía trên.</td></tr>
                     }
                 }
                 else
@@ -329,6 +357,7 @@
     private RenderFragment EditorInput(AppManagedColumn column, Dictionary<string, string> values) => @<input
         class="grid-input @InputCss(column)"
         type="@column.InputType"
+        placeholder="@InputPlaceholder(column)"
         step="@(column.InputType == "number" ? "any" : null)"
         value="@GetDictionaryValue(values, column.Key)"
         @oninput="e => SetDictionaryValue(values, column.Key, e.Value?.ToString())" />;
@@ -337,6 +366,10 @@
     {
         var value = row.Values.TryGetValue(column.Key, out var text) ? text : string.Empty;
         if (string.IsNullOrWhiteSpace(value)) return "—";
+        if (column.CssClass == "time-col")
+            return value.ltvNormalizeTime24h();
+        if (column.CssClass == "datetime-col")
+            return value.ltvNormalizeDateTimeOrTime24h();
         return value;
     }
 
@@ -346,8 +379,29 @@
         "number-col" => "number-input",
         "wide-text-col" => "place-input",
         "datetime-col" => "datetime-input",
+        "time-col" => "time-input",
         _ => string.Empty
     };
+
+    private static string? InputPlaceholder(AppManagedColumn column) => column.CssClass switch
+    {
+        "datetime-col" => "dd/MM/yyyy HH:mm:ss",
+        "time-col" => "HH:mm:ss",
+        _ => null
+    };
+
+    private void NormalizeTimeFields(Dictionary<string, string> values)
+    {
+        foreach (var column in Definition.Columns)
+        {
+            if (!values.TryGetValue(column.Key, out var raw) || string.IsNullOrWhiteSpace(raw))
+                continue;
+            if (column.CssClass == "time-col")
+                values[column.Key] = raw.ltvNormalizeTime24h();
+            else if (column.CssClass == "datetime-col")
+                values[column.Key] = raw.ltvNormalizeDateTimeOrTime24h();
+        }
+    }
 
     private int VisibleColumnCount => Definition.Columns.Count(x => Show(x.Key)) + (Show("CreatedAt") ? 1 : 0);
 
@@ -371,6 +425,7 @@
         _rowBusy = true; _error = _message = null;
         try
         {
+            NormalizeTimeFields(_newValues);
             await Store.AddCurrentAsync(Session.Area, Definition.Key, _newValues);
             _adding = false;
             _newValues = EmptyValues();
@@ -389,6 +444,7 @@
         _editValues = EmptyValues();
         foreach (var column in Definition.Columns)
             _editValues[column.Key] = row.Values.TryGetValue(column.Key, out var value) ? value : string.Empty;
+        NormalizeTimeFields(_editValues);
     }
 
     private void CancelEdit()
@@ -403,6 +459,7 @@
         _rowBusy = true; _error = _message = null;
         try
         {
+            NormalizeTimeFields(_editValues);
             await Store.UpdateCurrentAsync(Session.Area, Definition.Key, _editingId.Value, _editValues);
             _editingId = null;
             _editValues = EmptyValues();
@@ -444,6 +501,141 @@
         catch (Exception ex) { _error = ex.Message; }
         finally { _saving = false; }
     }
+
+    private async Task ExportLocalTableToGoogleSheetAsync()
+    {
+        if (Session.Area is null) return;
+        _exportingSheet = true;
+        _error = _message = null;
+        try
+        {
+            var isArchive = _activeTab == "archive";
+            var allRows = await Store.GetAllAsync(Session.Area, Definition.Key, isArchive, _search);
+            if (allRows.Count == 0)
+            {
+                _error = "Không có dòng dữ liệu nào để ghi vào Google Sheet.";
+                return;
+            }
+
+            var written = 0;
+            var sheetName = string.Empty;
+
+            switch (Definition.Key.ToLowerInvariant())
+            {
+                case "Ali":
+                case "customer-app":
+                {
+                    sheetName = AliGgSheetServer.SheetAppKhachHang;
+                    var list = allRows.Select(r => new AliOrder
+                    {
+                        ID = Val(r, "Id"),
+                        CustomerPhoneNumber = Val(r, "CustomerPhone"),
+                        CustomerFullName = Val(r, "CustomerName"),
+                        Status = Val(r, "TripStatus"),
+                        Distance = Val(r, "Km"),
+                        DriverPhoneNumber = Val(r, "DriverPhone"),
+                        DriveNo = Val(r, "VehicleNo"),
+                        Price = Val(r, "Fare"),
+                        Location = Val(r, "Location"),
+                        BookingTime = Val(r, "BookingTime").ltvNormalizeDateTimeOrTime24h(),
+                        Note = Val(r, "Note"),
+                        ProvinceName = Session.Area?.AreaName ?? string.Empty
+                    }).ToList();
+                    written = await AliSheetServer.OverwriteOrderAliAsync(list);
+                    break;
+                }
+                case "customer-promo":
+                {
+                    sheetName = AliGgSheetServer.SheetKhuyenMai;
+                    var list = allRows.Select(r => new AliPromote
+                    {
+                        ID = Val(r, "TripId"),
+                        PartnerCode = Val(r, "PartnerCode"),
+                        DriverPhoneNumber = Val(r, "DriverPhone"),
+                        PriceTrip = Val(r, "Fare"),
+                        PromotionPrice = Val(r, "Promotion"),
+                        VoucherPrice = Val(r, "Discount"),
+                        ReturnDiscount = Val(r, "ReturnDiscount"),
+                        ExtraFee = Val(r, "Surcharge"),
+                        CustomerPay = Val(r, "CustomerPay"),
+                        PaymentMethod = Val(r, "PaymentMethod"),
+                        CreatedAt = r.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss"),
+                        ProvinceName = Session.Area?.AreaName ?? string.Empty
+                    }).ToList();
+                    written = await AliSheetServer.OverwritePromoteAliAsync(list);
+                    break;
+                }
+                case "vnpay":
+                {
+                    sheetName = AliGgSheetServer.SheetPartnerVnPay;
+                    var list = allRows.Select(r => new AliPartnerVNPay
+                    {
+                        IdDoiTac = Val(r, "PartnerId"),
+                        IdCongTy = Val(r, "CompanyId"),
+                        IdHeThong = Val(r, "SystemId"),
+                        ThoiDiemPhatSinhCuocDi = Val(r, "TripOccurredAt").ltvNormalizeDateTimeOrTime24h(),
+                        SdtKhachHang = Val(r, "CustomerPhone"),
+                        TenKhachHang = Val(r, "CustomerName"),
+                        QuangDuong = Val(r, "Distance"),
+                        TienCuoc = Val(r, "Fare"),
+                        HinhThucThanhToan = Val(r, "PaymentMethod"),
+                        TrangThaiThanhToan = Val(r, "PaymentStatus"),
+                        DienThoaiLaiXe = Val(r, "DriverPhone"),
+                        MaLaiXe = Val(r, "DriverCode"),
+                        SoTai = Val(r, "VehicleNo"),
+                        BienSoXe = Val(r, "PlateNo"),
+                        TrangThaiChuyenDi = Val(r, "TripStatus"),
+                        DiemDon = Val(r, "Pickup"),
+                        DiemTra = Val(r, "Dropoff"),
+                        DichVu = Val(r, "Service")
+                    }).ToList();
+                    written = await AliSheetServer.OverwritePartnerVNPayAliAsync(list);
+                    break;
+                }
+                case "xanh-sm":
+                {
+                    sheetName = AliGgSheetServer.SheetPartnerGsm;
+                    var list = allRows.Select(r => new AliPartnerGSM
+                    {
+                        Id_partner = Val(r, "Id"),
+                        Id_ali = Val(r, "Depot"),
+                        TripTime = Val(r, "BookingTime").ltvNormalizeDateTimeOrTime24h(),
+                        CustomerPhoneNumber = Val(r, "CustomerPhone"),
+                        CustomerFullName = string.Empty,
+                        Distance = Val(r, "Distance"),
+                        Price = Val(r, "TotalFeeDisplay"),
+                        PaymentMethod = Val(r, "PaymentMethod"),
+                        PaymentStatus = Val(r, "DataStatus"),
+                        DriverPhoneNumber = Val(r, "DriverPhone"),
+                        DriverId = string.Empty,
+                        DriveNo = Val(r, "VehicleNo"),
+                        TripStatus = Val(r, "Status"),
+                        PickupLocation = Val(r, "Note"),
+                        DropoffLocation = string.Empty,
+                        TypeService = "GSM"
+                    }).ToList();
+                    written = await AliSheetServer.OverwritePartnerGSMAliAsync(list);
+                    break;
+                }
+            }
+
+            _message = $"Đã xóa từ dòng 2 và ghi đè {written:N0} dòng ({(_activeTab == "current" ? "Current" : "Kho")}) vào Google Sheet '{sheetName}'.";
+        }
+        catch (Exception ex)
+        {
+            _error = $"Lỗi ghi Google Sheet: {ex.Message}";
+        }
+        finally
+        {
+            _exportingSheet = false;
+        }
+    }
+
+    private static string Val(AppManagedRowView row, string key) =>
+        row.Values.TryGetValue(key, out var v) ? v : string.Empty;
+
+    private static double ParseDouble(string? raw) =>
+        double.TryParse((raw ?? "").Replace(",", "").Trim(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : 0;
 
     private async Task SwitchTabAsync(string tab)
     {
@@ -512,3 +704,4 @@
 
     public void Dispose() => Session.Changed -= OnSessionChanged;
 }
+

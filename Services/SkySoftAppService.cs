@@ -12,13 +12,18 @@ public sealed class SkySoftAppService
 {
     private readonly HttpClient _httpClient;
     private readonly SkySoftAppOptions _options;
+    private readonly SkySoftLinkService _linkService;
 
     public int MatchToleranceMinutes => Math.Clamp(_options.MatchToleranceMinutes, 1, 120);
 
-    public SkySoftAppService(HttpClient httpClient, IOptions<SkySoftAppOptions> options)
+    public SkySoftAppService(
+        HttpClient httpClient,
+        IOptions<SkySoftAppOptions> options,
+        SkySoftLinkService linkService)
     {
         _httpClient = httpClient;
         _options = options.Value;
+        _linkService = linkService;
         _httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(30, _options.TimeoutSeconds));
     }
 
@@ -26,8 +31,8 @@ public sealed class SkySoftAppService
         string areaCode,
         CancellationToken cancellationToken = default)
     {
-        var account = ResolveAccount(areaCode);
-        using var document = await PostAsync("online_taxi", account, new { }, cancellationToken);
+        var (account, baseUrl, _, filterDuplicates) = await ResolveAccountAsync(areaCode, cancellationToken);
+        using var document = await PostAsync("online_taxi", account, baseUrl, new { }, cancellationToken);
 
         if (!document.RootElement.TryGetProperty("vehicles", out var vehiclesElement) ||
             vehiclesElement.ValueKind != JsonValueKind.Array)
@@ -45,7 +50,13 @@ public sealed class SkySoftAppService
                 ParseApiDate(GetString(vehicle, "updateDate"))));
         }
 
-        return result
+        var filtered = await _linkService.FilterAndDeduplicateVehiclesForAreaAsync(
+            areaCode,
+            result,
+            filterDuplicates,
+            cancellationToken);
+
+        return filtered
             .OrderBy(x => x.VehicleNo, NaturalStringComparer.Instance)
             .ThenBy(x => x.PlateNo, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -65,12 +76,12 @@ public sealed class SkySoftAppService
         string areaCode,
         CancellationToken cancellationToken = default)
     {
-        var account = ResolveAccount(areaCode);
+        var (account, baseUrl, _, _) = await ResolveAccountAsync(areaCode, cancellationToken);
         var now = VietnamClock.Now;
         var targetToday05 = now.Date.AddHours(5);
         var targetYesterday05 = now.Date.AddDays(-1).AddHours(5);
 
-        // Đúng flow gốc: gọi online_taxi trước khi query trips.
+        // Đúng flow gốc: gọi online_taxi trước khi query trips (đã qua bộ lọc Biển số - Số hiệu).
         var vehicles = await GetOnlineVehiclesAsync(areaCode, cancellationToken);
         var collected = new List<OnlineTripInfo>();
         var generatedId = 1;
@@ -83,6 +94,7 @@ public sealed class SkySoftAppService
             using var document = await PostAsync(
                 "query_taxi_trips",
                 account,
+                baseUrl,
                 new { date = yyyyMMdd },
                 cancellationToken);
 
@@ -171,29 +183,43 @@ public sealed class SkySoftAppService
         CancellationToken cancellationToken = default) =>
         GetThreeDayFlowTripsAsync(areaCode, cancellationToken);
 
-    private SkySoftAppAreaOptions ResolveAccount(string areaCode)
+    private async Task<(SkySoftAppAreaOptions Account, string BaseUrl, int TimeoutSeconds, bool FilterDuplicates)> ResolveAccountAsync(
+        string areaCode,
+        CancellationToken cancellationToken)
     {
+        var linked = await _linkService.ResolveAreaApiAsync(areaCode, cancellationToken);
+        if (linked.Options is not null &&
+            !string.IsNullOrWhiteSpace(linked.Options.Username) &&
+            !string.IsNullOrWhiteSpace(linked.Options.Key) &&
+            !string.IsNullOrWhiteSpace(linked.Options.Token))
+        {
+            return (linked.Options, linked.BaseUrl, linked.TimeoutSeconds, linked.FilterDuplicates);
+        }
+
         var pair = _options.Areas.FirstOrDefault(x =>
             string.Equals(x.Key, areaCode, StringComparison.OrdinalIgnoreCase));
         var account = pair.Value;
 
         if (account is null || string.IsNullOrWhiteSpace(account.Username))
-            throw new InvalidOperationException($"Online App chưa cấu hình tài khoản API cho khu vực {areaCode}.");
+            throw new InvalidOperationException($"Online App chưa cấu hình tài khoản API cho khu vực {areaCode}. Hãy cấu hình trong mục Quản lý Liên kết.");
         if (string.IsNullOrWhiteSpace(account.Key) || string.IsNullOrWhiteSpace(account.Token))
             throw new InvalidOperationException(
-                $"Online App khu vực {areaCode} chưa có Key/Token. Hãy cấu hình bằng User Secrets hoặc biến môi trường.");
-        return account;
+                $"Online App khu vực {areaCode} chưa có Key/Token. Hãy cấu hình trong mục Quản lý Liên kết.");
+
+        return (account, _options.BaseUrl, _options.TimeoutSeconds, true);
     }
 
     private async Task<JsonDocument> PostAsync(
         string endpoint,
         SkySoftAppAreaOptions account,
+        string baseUrl,
         object payload,
         CancellationToken cancellationToken)
     {
         var unixTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var md5 = BuildMd5(account.Username, unixTime, account.Key);
-        var url = new Uri(new Uri(_options.BaseUrl.TrimEnd('/') + "/"), endpoint);
+        var resolvedBase = string.IsNullOrWhiteSpace(baseUrl) ? _options.BaseUrl : baseUrl;
+        var url = new Uri(new Uri(resolvedBase.TrimEnd('/') + "/"), endpoint);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {

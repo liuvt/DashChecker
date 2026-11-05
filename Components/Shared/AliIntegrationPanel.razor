@@ -1,0 +1,1166 @@
+﻿@using DashChecker.Extensions
+@using DashChecker.Models
+@using DashChecker.Servers
+@using DashChecker.Services
+@inject AliService Ali
+@inject AliGgSheetServer AliSheetServer
+@inject AliWorkerService AliWorker
+@inject AppManagementStoreService AppStore
+@inject AppSessionService Session
+@implements IDisposable
+
+<div class="Ali-panel">
+    <!-- Top Header & Quick Links -->
+    <div class="Ali-banner">
+        <div class="Ali-banner-left">
+            <div class="Ali-title-row">
+                <span class="Ali-badge">Ali • ADMIN.NHAXEVIET.VN · LƯU CỤC BỘ SQLITE</span>
+                <span class="Ali-cookie-pill @(Ali.IsConnected ? "ok" : "warn")">
+                    Liên kết Ali: @(Ali.IsConnected ? $"{Ali.ConnectedUserName} ({Ali.FirstCookieName})" : "Chưa kết nối")
+                </span>
+                <span class="Ali-worker-pill @(AliWorker.IsRunning ? "running" : "stopped")">
+                    <span class="status-dot @(AliWorker.IsRunning ? "pulse" : "")"></span>
+                    Hẹn giờ 1 lần/ngày: @(AliWorker.IsRunning ? $"ĐANG CHẠY ({AliWorker.SelectedPresetKey})" : "ĐANG DỪNG")
+                </span>
+            </div>
+            <h3>Tích hợp Ali — Lưu cục bộ SQLite (7 Bảng) &amp; Nhập Google Sheet Theo Yêu Cầu</h3>
+            <p>Dữ liệu gọi từ API hoặc chạy hẹn giờ hàng ngày được lưu vào <strong>7 bảng SQLite cục bộ</strong> (không tự ý đẩy lên Google Sheet). Chỉ khi bấm nút <strong>"⇧ Nhập vào Google Sheet"</strong> mới ghi lên Google Sheet.</p>
+        </div>
+        <div class="Ali-banner-actions">
+            @if (!ShowScheduler)
+            {
+                <NavLink class="btn ghost compact" href="/ali-schedule">
+                    <span>⏱ Mở Chạy Ali (Hẹn giờ) (@(AliWorker.IsRunning ? $"Mốc {AliWorker.SelectedPresetKey}" : "Cấu hình"))</span>
+                </NavLink>
+            }
+            <NavLink class="btn ghost compact" href="/link-management">
+                <span>⇄ Tài khoản Liên kết (@(Ali.IsConnected ? Ali.ConnectedUserName : "Cấu hình"))</span>
+            </NavLink>
+            <a class="btn secondary compact" href="@GetActiveSheetUrl()" target="_blank" rel="noopener noreferrer">
+                <span>↗ Mở Google Sheet (@GetActiveSheetName())</span>
+            </a>
+            <button type="button" class="btn ghost compact" @onclick="() => _collapsed = !_collapsed">
+                <span>@(_collapsed ? "▼ Mở rộng bộ điều khiển Ali" : "▲ Thu gọn")</span>
+            </button>
+        </div>
+    </div>
+
+    @if (!_collapsed)
+    {
+        @if (ShowScheduler)
+        {
+            <!-- 1. Chạy hẹn giờ tự động 1 lần/ngày theo mốc thời gian có sẵn → Lưu SQLite cục bộ -->
+            <div class="Ali-box" style="margin-bottom:16px">
+                <div class="Ali-box-header">
+                    <div>
+                        <h4>1. Chạy Ali (Hẹn giờ tự động 1 lần/ngày → Lưu Database SQLite cục bộ)</h4>
+                        <span>Tự động gọi API ca 05:00:00 hôm qua → 05:00:00 hôm nay theo mốc thời gian có sẵn (1 lần/ngày) và lưu vào 7 bảng SQLite cục bộ — không tự ý đẩy Google Sheet</span>
+                    </div>
+                    <span class="link-status-badge @(AliWorker.IsRunning ? "connected" : "disconnected")">
+                        <span class="status-dot @(AliWorker.IsRunning ? "pulse" : "")"></span>
+                        @(AliWorker.IsRunning ? $"RUNNING · {AliWorker.SelectedPresetKey}" : "STOPPED")
+                    </span>
+                </div>
+
+                <div class="Ali-worker-status">
+                    <div>
+                        <small>Trạng thái tiến trình hẹn giờ hàng ngày:</small>
+                        <strong>@AliWorker.CurrentStatus</strong>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px">
+                        @if (AliWorker.LastCompletedDailyDate.HasValue)
+                        {
+                            <span class="Ali-time-tag">Đã chạy ngày: @AliWorker.LastCompletedDailyDate.Value.ToString("dd/MM/yyyy")</span>
+                        }
+                        @if (AliWorker.LastUpdated.HasValue)
+                        {
+                            <span class="Ali-time-tag">Cập nhật: @AliWorker.LastUpdated.Value.ToString("HH:mm:ss dd/MM")</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="Ali-schedule-controls">
+                    <label class="Ali-field" style="min-width:340px;flex:1">
+                        <span>Mốc thời gian bắt đầu có sẵn (Run 1 lần hàng ngày · Chuẩn 24h HH:mm:ss)</span>
+                        <select value="@_selectedPresetKey"
+                                @onchange="OnPresetTimeChanged"
+                                disabled="@AliWorker.IsRunning">
+                            @foreach (var preset in AliWorkerService.PresetStartTimes)
+                            {
+                                <option value="@preset.Key">@preset.Label</option>
+                            }
+                        </select>
+                    </label>
+
+                    <div class="Ali-schedule-btns">
+                        @if (!AliWorker.IsRunning)
+                        {
+                            <button type="button" class="btn save compact" @onclick="StartDailyWorker">
+                                <span>▶ Bật chạy hẹn giờ (1 lần/ngày → SQLite)</span>
+                            </button>
+                        }
+                        else
+                        {
+                            <button type="button" class="btn danger compact" @onclick="StopDailyWorker">
+                                <span>■ Dừng hẹn giờ</span>
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <div class="Ali-schedule-chips">
+                    @foreach (var item in AliWorker.GetActiveJobsForSelectedPreset())
+                    {
+                        <span class="schedule-chip" title="@item.Description">
+                            <b>@item.DefaultTime.ToString(@"hh\:mm\:ss")</b> @item.Title
+                        </span>
+                    }
+                </div>
+            </div>
+        }
+
+        <!-- 2. Bộ lọc Thời gian, Tỉnh/Khu vực, Chạy Đồng Bộ lưu SQLite cục bộ & Hiển thị từ Database -->
+        <div class="Ali-box Ali-search-box">
+            <div class="Ali-box-header">
+                <div>
+                    <h4>@(ShowScheduler ? "2. Chạy Đồng Bộ (7 Endpoint → Database SQLite) & Hiển thị từ Database" : "Tra cứu dữ liệu từ Database SQLite & Nhập vào Google Sheet")</h4>
+                    <span>Giao diện hiển thị trực tiếp từ <strong>Database SQLite cục bộ</strong> (không gọi lại API để tăng tốc). Bấm <strong>"⚡ Chạy Đồng Bộ"</strong> khi cần gọi lần lượt các endpoint lưu mới vào Database.</span>
+                </div>
+                <div class="Ali-presets">
+                    <button type="button" class="mini-btn" @onclick="SetPresetStandardShift" disabled="@_busy">Ca chuẩn (05:00:00 hôm qua → 05:00:00 hôm nay)</button>
+                    <button type="button" class="mini-btn" @onclick="SetPresetToday" disabled="@_busy">Hôm nay (00:00:00 → Hiện tại)</button>
+                    <button type="button" class="mini-btn" @onclick="SetPresetLast3Days" disabled="@_busy">3 ngày qua</button>
+                </div>
+            </div>
+
+            <div class="Ali-query-bar">
+                <div class="Ali-field">
+                    <span>Từ thời điểm (Ngày &amp; Giờ 24h HH:mm:ss)</span>
+                    <div class="datetime-24h-group">
+                        <input type="date" @bind="StartDatePart" disabled="@_busy" />
+                        <input type="text"
+                               class="time-24h-input"
+                               value="@StartTimePart"
+                               @onchange="OnStartTimePartChanged"
+                               placeholder="HH:mm:ss"
+                               title="Giờ chuẩn 24h HH:mm:ss (không dùng AM/PM)"
+                               disabled="@_busy" />
+                    </div>
+                </div>
+                <div class="Ali-field">
+                    <span>Đến thời điểm (Ngày &amp; Giờ 24h HH:mm:ss)</span>
+                    <div class="datetime-24h-group">
+                        <input type="date" @bind="EndDatePart" disabled="@_busy" />
+                        <input type="text"
+                               class="time-24h-input"
+                               value="@EndTimePart"
+                               @onchange="OnEndTimePartChanged"
+                               placeholder="HH:mm:ss"
+                               title="Giờ chuẩn 24h HH:mm:ss (không dùng AM/PM)"
+                               disabled="@_busy" />
+                    </div>
+                </div>
+                <label class="Ali-field">
+                    <span>Khu vực / Tỉnh (Lọc nhanh trên Database)</span>
+                    <select @bind="_selectedProvince" disabled="@_busy">
+                        <option value="ALL">Tất cả 9 tỉnh thành</option>
+                        @foreach (var p in AliService.Provinces)
+                        {
+                            <option value="@p.Code">@p.Name (Mã @p.Code)</option>
+                        }
+                    </select>
+                </label>
+                <label class="Ali-field">
+                    <span>Từ khóa Search trên Database (ID, Số tài, SĐT, Tên KH, Địa điểm...)</span>
+                    <input @bind="_searchKeyword" @bind:event="oninput" placeholder="Nhập số tài, SĐT khách, SĐT tài xế, ID..." />
+                </label>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="Ali-action-strip">
+                <div class="Ali-primary-actions">
+                    <button type="button" class="btn primary" @onclick="RunSequentialSyncAllEndpointsAsync" disabled="@_busy" title="Gọi lần lượt cả 7 endpoint từ Ali và lưu vào Database SQLite cục bộ">
+                        @if (_fetching)
+                        {
+                            <span class="spinner"></span><span>Đang Chạy Đồng Bộ vào Database...</span>
+                        }
+                        else
+                        {
+                            <span>⚡ Chạy Đồng Bộ (Gọi lần lượt 7 Endpoint → Lưu Database)</span>
+                        }
+                    </button>
+
+                    <button type="button" class="btn secondary" @onclick="ReloadFromLocalSqliteButtonAsync" disabled="@_busy" title="Hiển thị dữ liệu trực tiếp từ Database SQLite cục bộ, không gọi lại API">
+                        <span>🔍 Hiển thị từ Database (@GetActiveTabShortName(): @GetActiveFilteredCount().ToString("N0") dòng)</span>
+                    </button>
+
+                    <button type="button" class="btn save" @onclick="WriteCurrentFilteredToGoogleSheetAsync" disabled="@(_busy || GetActiveFilteredCount() == 0)" title="Chỉ khi bấm nút này dữ liệu đang hiển thị trong Database mới được nhập lên Google Sheet">
+                        @if (_writingSheet)
+                        {
+                            <span class="spinner"></span><span>Đang nhập vào Google Sheet...</span>
+                        }
+                        else
+                        {
+                            <span>⇧ Nhập vào Google Sheet (@GetActiveFilteredCount().ToString("N0") dòng → @GetActiveSheetName())</span>
+                        }
+                    </button>
+
+                    @if (Session.Area is not null && CanPushToLocalCurrent())
+                    {
+                        <button type="button" class="btn secondary" @onclick="PushFilteredToLocalCurrentAsync" disabled="@(_busy || GetActiveFilteredCount() == 0)">
+                            <span>📥 Nạp @GetActiveFilteredCount().ToString("N0") dòng vào Current (@Session.Area.AreaName)</span>
+                        </button>
+                    }
+                </div>
+
+                <div class="Ali-quick-sync">
+                    <span class="quick-sync-label">Đồng bộ lẻ từng Endpoint vào Database (Khi cần cập nhật riêng 1 bảng):</span>
+                    <button type="button" class="mini-btn" @onclick='() => FetchTabOnlyToLocalAsync("orders")' disabled="@_busy">↻ 1. App KH</button>
+                    <button type="button" class="mini-btn" @onclick='() => FetchTabOnlyToLocalAsync("promotes")' disabled="@_busy">↻ 2. Khuyến mãi</button>
+                    <button type="button" class="mini-btn" @onclick='() => FetchTabOnlyToLocalAsync("cancels")' disabled="@_busy">↻ 3. Cuốc hủy</button>
+                    <button type="button" class="mini-btn" @onclick='() => FetchTabOnlyToLocalAsync("switchboard")' disabled="@_busy">↻ 4. Tổng đài HT</button>
+                    <button type="button" class="mini-btn" @onclick='() => FetchTabOnlyToLocalAsync("gsm")' disabled="@_busy">↻ 5. Đối tác GSM</button>
+                    <button type="button" class="mini-btn" @onclick='() => FetchTabOnlyToLocalAsync("vnpay")' disabled="@_busy">↻ 6. Đối tác VNPay</button>
+                    <button type="button" class="mini-btn" @onclick='() => FetchTabOnlyToLocalAsync("online")' disabled="@_busy">↻ 7. Online App</button>
+                </div>
+            </div>
+
+            @if (_busy && !string.IsNullOrWhiteSpace(_liveProgress))
+            {
+                <div class="inline-message data-message" style="background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;">
+                    <span class="spinner dark" style="margin-right:8px;"></span>
+                    <strong>@_liveProgress</strong>
+                </div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_statusMessage))
+            {
+                <div class="inline-message success data-message">@_statusMessage</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_errorMessage))
+            {
+                <div class="inline-message error data-message">@_errorMessage</div>
+            }
+
+            <!-- 7 KPI Tabs -->
+            <div class="Ali-kpi-tabs">
+                <button type="button" class="Ali-kpi-tab @(_activeTab == "orders" ? "active" : "")" @onclick='() => SelectTab("orders")'>
+                    <span>1. App Khách hàng</span>
+                    <strong>@_orders.Count.ToString("N0")</strong>
+                    <small>Sheet: APP KHÁCH HÀNG</small>
+                </button>
+                <button type="button" class="Ali-kpi-tab @(_activeTab == "promotes" ? "active" : "")" @onclick='() => SelectTab("promotes")'>
+                    <span>2. Khuyến mãi</span>
+                    <strong>@_promotes.Count.ToString("N0")</strong>
+                    <small>Sheet: KHUYẾN MÃI</small>
+                </button>
+                <button type="button" class="Ali-kpi-tab @(_activeTab == "cancels" ? "active" : "")" @onclick='() => SelectTab("cancels")'>
+                    <span>3. Cuốc hủy</span>
+                    <strong>@_cancels.Count.ToString("N0")</strong>
+                    <small>Sheet: HỦY CUỐC TĐ/APP</small>
+                </button>
+                <button type="button" class="Ali-kpi-tab @(_activeTab == "switchboard" ? "active" : "")" @onclick='() => SelectTab("switchboard")'>
+                    <span>4. Tổng đài HT</span>
+                    <strong>@_switchboards.Count.ToString("N0")</strong>
+                    <small>Sheet: KIỂM SOÁT DV HT</small>
+                </button>
+                <button type="button" class="Ali-kpi-tab @(_activeTab == "gsm" ? "active" : "")" @onclick='() => SelectTab("gsm")'>
+                    <span>5. Đối tác GSM</span>
+                    <strong>@_partnerGsms.Count.ToString("N0")</strong>
+                    <small>Sheet: ĐỐI TÁC GSM</small>
+                </button>
+                <button type="button" class="Ali-kpi-tab @(_activeTab == "vnpay" ? "active" : "")" @onclick='() => SelectTab("vnpay")'>
+                    <span>6. Đối tác VNPay</span>
+                    <strong>@_partnerVnPays.Count.ToString("N0")</strong>
+                    <small>Sheet: ĐỐI TÁC VNPAY</small>
+                </button>
+                <button type="button" class="Ali-kpi-tab @(_activeTab == "online" ? "active" : "")" @onclick='() => SelectTab("online")'>
+                    <span>7. Online App</span>
+                    <strong>@_onlineApps.Count.ToString("N0")</strong>
+                    <small>Sheet: ONLINE APP</small>
+                </button>
+            </div>
+
+            <!-- Results Table Preview -->
+            @RenderActiveResultTable()
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string DefaultTab { get; set; } = "orders";
+    [Parameter] public bool ShowScheduler { get; set; }
+    [Parameter] public EventCallback OnLocalCurrentUpdated { get; set; }
+
+    private bool _collapsed;
+    private bool _fetching;
+    private bool _writingSheet;
+    private bool _busy => _fetching || _writingSheet;
+
+    private string? _liveProgress;
+    private string? _statusMessage;
+    private string? _errorMessage;
+
+    private string _selectedPresetKey = "05:05:00";
+    private string _activeTab = "orders";
+    private string _lastDefaultTab = string.Empty;
+    private string _selectedProvince = "ALL";
+    private string _searchKeyword = string.Empty;
+    private int _displayLimit = 100;
+
+    private DateTime _startDate = VietnamClock.Now.Date.AddDays(-1).AddHours(5);
+    private DateTime _endDate = VietnamClock.Now.Date.AddHours(5);
+
+    private DateTime StartDatePart
+    {
+        get => _startDate.Date;
+        set => _startDate = value.Date.Add(_startDate.TimeOfDay);
+    }
+
+    private string StartTimePart => _startDate.ToString("HH:mm:ss");
+
+    private DateTime EndDatePart
+    {
+        get => _endDate.Date;
+        set => _endDate = value.Date.Add(_endDate.TimeOfDay);
+    }
+
+    private string EndTimePart => _endDate.ToString("HH:mm:ss");
+
+    private List<AliOrder> _orders = [];
+    private List<AliPromote> _promotes = [];
+    private List<AliCancelOrder> _cancels = [];
+    private List<AliSwitchboard> _switchboards = [];
+    private List<AliPartnerGSM> _partnerGsms = [];
+    private List<AliPartnerVNPay> _partnerVnPays = [];
+    private List<AliOnlineApp> _onlineApps = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _selectedPresetKey = AliWorker.SelectedPresetKey;
+        _activeTab = NormalizeTabFromModule(DefaultTab);
+        Ali.ProgressChanged += OnProgressChanged;
+        Ali.AuthChanged += OnAliAuthChanged;
+        Ali.LocalDataChanged += OnLocalDataChanged;
+        AliWorker.StatusChanged += OnWorkerChanged;
+
+        try
+        {
+            await Ali.LoadAuthenticationAsync();
+            await LoadAllFromLocalSqliteAsync();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Lỗi đọc cấu hình Ali / SQLite cục bộ: {ex.Message}";
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!string.Equals(_lastDefaultTab, DefaultTab, StringComparison.OrdinalIgnoreCase))
+        {
+            _lastDefaultTab = DefaultTab;
+            var mapped = NormalizeTabFromModule(DefaultTab);
+            if (!string.IsNullOrWhiteSpace(mapped))
+                _activeTab = mapped;
+        }
+    }
+
+    private static string NormalizeTabFromModule(string? key) => (key ?? "").ToLowerInvariant() switch
+    {
+        "customer-promo" or "promotes" => "promotes",
+        "vnpay" => "vnpay",
+        "xanh-sm" or "gsm" => "gsm",
+        "cancels" => "cancels",
+        "switchboard" => "switchboard",
+        "online" => "online",
+        _ => "orders"
+    };
+
+    private void SelectTab(string tab)
+    {
+        _activeTab = tab;
+        _errorMessage = null;
+    }
+
+    private void OnProgressChanged(string msg)
+    {
+        _liveProgress = msg;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnWorkerChanged()
+    {
+        _selectedPresetKey = AliWorker.SelectedPresetKey;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnPresetTimeChanged(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            _selectedPresetKey = key;
+            AliWorker.SelectPreset(key);
+        }
+    }
+
+    private void StartDailyWorker()
+    {
+        AliWorker.Start(_selectedPresetKey);
+        _statusMessage = $"Đã bật Chạy Ali (Hẹn giờ 1 lần/ngày theo mốc {_selectedPresetKey}) — Chỉ gọi API lưu vào 7 bảng SQLite cục bộ, không tự ý đẩy Google Sheet.";
+    }
+
+    private void StopDailyWorker()
+    {
+        AliWorker.Stop();
+        _statusMessage = "Đã dừng tiến trình Chạy Ali (Hẹn giờ).";
+    }
+
+    private void OnAliAuthChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnLocalDataChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await LoadAllFromLocalSqliteAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadAllFromLocalSqliteAsync()
+    {
+        _orders = await Ali.GetLocalOrdersAsync();
+        _promotes = await Ali.GetLocalPromotesAsync();
+        _cancels = await Ali.GetLocalCancelOrdersAsync();
+        _switchboards = await Ali.GetLocalSwitchboardsAsync();
+        _partnerGsms = await Ali.GetLocalPartnerGsmAsync();
+        _partnerVnPays = await Ali.GetLocalPartnerVnPayAsync();
+        _onlineApps = await Ali.GetLocalOnlineAppsAsync();
+    }
+
+    private async Task ReloadFromLocalSqliteButtonAsync()
+    {
+        _errorMessage = null;
+        await LoadAllFromLocalSqliteAsync();
+        _statusMessage = $"Đã tải dữ liệu từ 7 bảng SQLite cục bộ ({GetActiveTabShortName()}: {GetActiveFilteredCount():N0} dòng).";
+    }
+
+    private void OnStartTimePartChanged(ChangeEventArgs e)
+    {
+        var ts = e.Value?.ToString().ltvStringToTimeSpan();
+        if (ts.HasValue)
+        {
+            var clamped = new TimeSpan(Math.Clamp(ts.Value.Hours, 0, 23), Math.Clamp(ts.Value.Minutes, 0, 59), Math.Clamp(ts.Value.Seconds, 0, 59));
+            _startDate = _startDate.Date.Add(clamped);
+        }
+    }
+
+    private void OnEndTimePartChanged(ChangeEventArgs e)
+    {
+        var ts = e.Value?.ToString().ltvStringToTimeSpan();
+        if (ts.HasValue)
+        {
+            var clamped = new TimeSpan(Math.Clamp(ts.Value.Hours, 0, 23), Math.Clamp(ts.Value.Minutes, 0, 59), Math.Clamp(ts.Value.Seconds, 0, 59));
+            _endDate = _endDate.Date.Add(clamped);
+        }
+    }
+
+    private void SetPresetStandardShift()
+    {
+        _startDate = VietnamClock.Now.Date.AddDays(-1).AddHours(5);
+        _endDate = VietnamClock.Now.Date.AddHours(5);
+    }
+
+    private void SetPresetToday()
+    {
+        _startDate = VietnamClock.Now.Date;
+        _endDate = VietnamClock.Now;
+    }
+
+    private void SetPresetLast3Days()
+    {
+        _startDate = VietnamClock.Now.Date.AddDays(-3).AddHours(5);
+        _endDate = VietnamClock.Now.Date.AddHours(5);
+    }
+
+    private async Task SearchAndFetchActiveTabAsync()
+    {
+        _fetching = true;
+        _errorMessage = _statusMessage = null;
+        _liveProgress = $"Đang gọi API {GetActiveTabShortName()} từ admin.nhaxeviet.vn và lưu vào SQLite cục bộ...";
+        try
+        {
+            switch (_activeTab)
+            {
+                case "orders":
+                    _orders = await Ali.GetOrdersAsync(_startDate, _endDate, _selectedProvince);
+                    _statusMessage = $"Đã gọi API & lưu {_orders.Count:N0} đơn hàng App Khách hàng vào bảng SQLite cục bộ (AliOrders). Chỉ khi bấm 'Nhập vào Google Sheet' mới ghi lên Sheet.";
+                    break;
+                case "promotes":
+                    _promotes = await Ali.GetPromotesAsync(_startDate, _endDate, _selectedProvince);
+                    _statusMessage = $"Đã gọi API & lưu {_promotes.Count:N0} bản ghi Khuyến mãi vào bảng SQLite cục bộ (AliPromotes). Chỉ khi bấm 'Nhập vào Google Sheet' mới ghi lên Sheet.";
+                    break;
+                case "cancels":
+                    _cancels = await Ali.GetCancelOrdersAsync(_startDate, _endDate, _selectedProvince);
+                    _statusMessage = $"Đã gọi API & lưu {_cancels.Count:N0} cuốc hủy vào bảng SQLite cục bộ (AliCancelOrders). Chỉ khi bấm 'Nhập vào Google Sheet' mới ghi lên Sheet.";
+                    break;
+                case "switchboard":
+                    _switchboards = await Ali.GetSwitchboardsAsync(_startDate, _endDate, _selectedProvince);
+                    _statusMessage = $"Đã gọi API & lưu {_switchboards.Count:N0} cuốc Tổng đài hoàn thành vào bảng SQLite cục bộ (AliSwitchboards). Chỉ khi bấm 'Nhập vào Google Sheet' mới ghi lên Sheet.";
+                    break;
+                case "gsm":
+                    _partnerGsms = await Ali.GetPartnerGsmAsync(_startDate, _endDate);
+                    _statusMessage = $"Đã gọi API & lưu {_partnerGsms.Count:N0} cuốc Đối tác GSM vào bảng SQLite cục bộ (AliPartnerGsms). Chỉ khi bấm 'Nhập vào Google Sheet' mới ghi lên Sheet.";
+                    break;
+                case "vnpay":
+                    _partnerVnPays = await Ali.GetPartnerVnPayAsync(_startDate, _endDate);
+                    _statusMessage = $"Đã gọi API & lưu {_partnerVnPays.Count:N0} cuốc Đối tác VNPay vào bảng SQLite cục bộ (AliPartnerVnPays). Chỉ khi bấm 'Nhập vào Google Sheet' mới ghi lên Sheet.";
+                    break;
+                case "online":
+                    _onlineApps = await Ali.GetOnlineAppsAsync(_startDate, _endDate, _selectedProvince);
+                    _statusMessage = $"Đã gọi API & lưu {_onlineApps.Count:N0} bản ghi Online App vào bảng SQLite cục bộ (AliOnlineApps). Chỉ khi bấm 'Nhập vào Google Sheet' mới ghi lên Sheet.";
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Lỗi tải dữ liệu Ali: {ex.Message}";
+        }
+        finally
+        {
+            _fetching = false;
+            _liveProgress = null;
+        }
+    }
+
+    private async Task WriteCurrentFilteredToGoogleSheetAsync()
+    {
+        _writingSheet = true;
+        _errorMessage = _statusMessage = null;
+        _liveProgress = $"Đang xóa từ dòng 2 và nhập dữ liệu cục bộ vào Google Sheet '{GetActiveSheetName()}'...";
+        try
+        {
+            var written = 0;
+            switch (_activeTab)
+            {
+                case "orders":
+                    written = await AliSheetServer.OverwriteOrderAliAsync(FilterOrders());
+                    break;
+                case "promotes":
+                    written = await AliSheetServer.OverwritePromoteAliAsync(FilterPromotes());
+                    break;
+                case "cancels":
+                    written = await AliSheetServer.OverwriteCancelOrderAliAsync(FilterCancels());
+                    break;
+                case "switchboard":
+                    written = await AliSheetServer.OverwriteSwitchboardAliAsync(FilterSwitchboards());
+                    break;
+                case "gsm":
+                    written = await AliSheetServer.OverwritePartnerGSMAliAsync(FilterPartnerGsm());
+                    break;
+                case "vnpay":
+                    written = await AliSheetServer.OverwritePartnerVNPayAliAsync(FilterPartnerVnPay());
+                    break;
+                case "online":
+                    written = await AliSheetServer.OverwriteOnlineAliAsync(FilterOnlineApps());
+                    break;
+            }
+
+            _statusMessage = $"Đã nhập thành công {written:N0} dòng vào Google Sheet '{GetActiveSheetName()}' (ID: {AliSheetServer.SpreadSheetId}).";
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Nhập Google Sheet thất bại: {ex.Message}";
+        }
+        finally
+        {
+            _writingSheet = false;
+            _liveProgress = null;
+        }
+    }
+
+    private async Task FetchTabOnlyToLocalAsync(string tab)
+    {
+        _activeTab = tab;
+        await SearchAndFetchActiveTabAsync();
+    }
+
+    private async Task RunSequentialSyncAllEndpointsAsync()
+    {
+        _fetching = true;
+        _errorMessage = _statusMessage = null;
+        try
+        {
+            _liveProgress = "[1/7] Đang gọi endpoint 1. Đơn hàng App Khách hàng → Lưu Database SQLite...";
+            await InvokeAsync(StateHasChanged);
+            _orders = await Ali.GetOrdersAsync(_startDate, _endDate, "ALL");
+
+            _liveProgress = "[2/7] Đang gọi endpoint 2. Khuyến mãi → Lưu Database SQLite...";
+            await InvokeAsync(StateHasChanged);
+            _promotes = await Ali.GetPromotesAsync(_startDate, _endDate, "ALL");
+
+            _liveProgress = "[3/7] Đang gọi endpoint 3. Cuốc hủy Tổng đài/App → Lưu Database SQLite...";
+            await InvokeAsync(StateHasChanged);
+            _cancels = await Ali.GetCancelOrdersAsync(_startDate, _endDate, "ALL");
+
+            _liveProgress = "[4/7] Đang gọi endpoint 4. Tổng đài hoàn thành → Lưu Database SQLite...";
+            await InvokeAsync(StateHasChanged);
+            _switchboards = await Ali.GetSwitchboardsAsync(_startDate, _endDate, "ALL");
+
+            _liveProgress = "[5/7] Đang gọi endpoint 5. Đối tác GSM → Lưu Database SQLite...";
+            await InvokeAsync(StateHasChanged);
+            _partnerGsms = await Ali.GetPartnerGsmAsync(_startDate, _endDate);
+
+            _liveProgress = "[6/7] Đang gọi endpoint 6. Đối tác VNPay → Lưu Database SQLite...";
+            await InvokeAsync(StateHasChanged);
+            _partnerVnPays = await Ali.GetPartnerVnPayAsync(_startDate, _endDate);
+
+            _liveProgress = "[7/7] Đang gọi endpoint 7. Online App → Lưu Database SQLite...";
+            await InvokeAsync(StateHasChanged);
+            _onlineApps = await Ali.GetOnlineAppsAsync(_startDate, _endDate, "ALL");
+
+            await LoadAllFromLocalSqliteAsync();
+            _statusMessage =
+                $"Đã Chạy Đồng Bộ lần lượt 7 endpoint & lưu vào Database SQLite lúc {VietnamClock.Now:HH:mm:ss}: " +
+                $"App KH ({_orders.Count:N0}), Khuyến mãi ({_promotes.Count:N0}), Cuốc hủy ({_cancels.Count:N0}), " +
+                $"Tổng đài HT ({_switchboards.Count:N0}), GSM ({_partnerGsms.Count:N0}), VNPay ({_partnerVnPays.Count:N0}), Online App ({_onlineApps.Count:N0}).";
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Lỗi Chạy Đồng Bộ 7 endpoint về Database: {ex.Message}";
+        }
+        finally
+        {
+            _fetching = false;
+            _liveProgress = null;
+        }
+    }
+
+    private bool CanPushToLocalCurrent() => _activeTab is "orders" or "promotes" or "vnpay" or "gsm";
+
+    private async Task PushFilteredToLocalCurrentAsync()
+    {
+        if (Session.Area is null) return;
+        _errorMessage = _statusMessage = null;
+        var nowDate = VietnamClock.Now.ToString("dd/MM/yyyy");
+
+        try
+        {
+            if (_activeTab == "orders")
+            {
+                var rows = FilterOrders().Select(x => (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Id"] = x.ID,
+                    ["CustomerPhone"] = x.CustomerPhoneNumber,
+                    ["CustomerName"] = x.CustomerFullName,
+                    ["TripStatus"] = x.Status,
+                    ["Km"] = x.Distance,
+                    ["DriverPhone"] = x.DriverPhoneNumber,
+                    ["VehicleNo"] = x.DriveNo,
+                    ["Fare"] = x.Price,
+                    ["Location"] = x.Location,
+                    ["BookingTime"] = x.BookingTime,
+                    ["Note"] = x.Note,
+                    ["DataStatus"] = nowDate
+                }).ToList();
+
+                await AppStore.ReplaceCurrentRowsAsync(Session.Area, "customer-app", rows);
+                _statusMessage = $"Đã nạp {rows.Count:N0} dòng Đơn hàng App KH vào bảng Current ({Session.Area.AreaName}).";
+            }
+            else if (_activeTab == "promotes")
+            {
+                var rows = FilterPromotes().Select(x => (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["TripId"] = x.ID,
+                    ["PartnerCode"] = x.PartnerCode,
+                    ["DriverPhone"] = x.DriverPhoneNumber,
+                    ["Fare"] = x.PriceTrip,
+                    ["Promotion"] = x.PromotionPrice,
+                    ["ReturnDiscount"] = x.ReturnDiscount,
+                    ["CustomerPay"] = x.CustomerPay,
+                    ["Surcharge"] = x.ExtraFee,
+                    ["Discount"] = x.VoucherPrice,
+                    ["Revenue"] = x.CustomerPay,
+                    ["RemainingDeposit"] = "",
+                    ["PaymentMethod"] = x.PaymentMethod
+                }).ToList();
+
+                await AppStore.ReplaceCurrentRowsAsync(Session.Area, "customer-promo", rows);
+                _statusMessage = $"Đã nạp {rows.Count:N0} dòng Khuyến mãi vào bảng Current ({Session.Area.AreaName}).";
+            }
+            else if (_activeTab == "vnpay")
+            {
+                var rows = FilterPartnerVnPay().Select(x => (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["PartnerId"] = x.IdDoiTac,
+                    ["CompanyId"] = x.IdCongTy,
+                    ["SystemId"] = x.IdHeThong,
+                    ["TripOccurredAt"] = x.ThoiDiemPhatSinhCuocDi,
+                    ["CustomerPhone"] = x.SdtKhachHang,
+                    ["CustomerName"] = x.TenKhachHang,
+                    ["Distance"] = x.QuangDuong,
+                    ["Fare"] = x.TienCuoc,
+                    ["PaymentMethod"] = x.HinhThucThanhToan,
+                    ["PaymentStatus"] = x.TrangThaiThanhToan,
+                    ["DriverPhone"] = x.DienThoaiLaiXe,
+                    ["DriverCode"] = x.MaLaiXe,
+                    ["VehicleNo"] = x.SoTai,
+                    ["PlateNo"] = x.BienSoXe,
+                    ["TripStatus"] = x.TrangThaiChuyenDi,
+                    ["Pickup"] = x.DiemDon,
+                    ["Dropoff"] = x.DiemTra,
+                    ["Service"] = x.DichVu,
+                    ["DataStatus"] = nowDate
+                }).ToList();
+
+                await AppStore.ReplaceCurrentRowsAsync(Session.Area, "vnpay", rows);
+                _statusMessage = $"Đã nạp {rows.Count:N0} dòng Đối tác VNPay vào bảng Current ({Session.Area.AreaName}).";
+            }
+            else if (_activeTab == "gsm")
+            {
+                var rows = FilterPartnerGsm().Select(x => (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Id"] = x.Id_partner,
+                    ["CustomerPhone"] = x.CustomerPhoneNumber,
+                    ["Depot"] = x.Id_ali,
+                    ["Status"] = x.TripStatus,
+                    ["Distance"] = x.Distance,
+                    ["DriverPhone"] = x.DriverPhoneNumber,
+                    ["VehicleNo"] = x.DriveNo,
+                    ["TotalFeeDisplay"] = x.Price,
+                    ["TotalPayDisplay"] = x.Price,
+                    ["TipAmount"] = "0",
+                    ["BookingTime"] = x.TripTime,
+                    ["PaymentMethod"] = x.PaymentMethod,
+                    ["Note"] = $"{x.PickupLocation} → {x.DropoffLocation}",
+                    ["DataStatus"] = nowDate
+                }).ToList();
+
+                await AppStore.ReplaceCurrentRowsAsync(Session.Area, "xanh-sm", rows);
+                _statusMessage = $"Đã nạp {rows.Count:N0} dòng Đối tác GSM vào bảng Current ({Session.Area.AreaName}).";
+            }
+
+            if (OnLocalCurrentUpdated.HasDelegate)
+                await OnLocalCurrentUpdated.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Lỗi nạp vào Current: {ex.Message}";
+        }
+    }
+
+    private RenderFragment RenderActiveResultTable() => @<div class="Ali-result-wrap">
+        <div class="Ali-result-toolbar">
+            <span>Đang hiển thị từ <strong>Database SQLite (@GetActiveTabShortName())</strong>: <strong>@GetActiveFilteredCount().ToString("N0")</strong> bản ghi (Không gọi lại API)</span>
+            <div class="Ali-limit-select">
+                <span>Hiển thị:</span>
+                <select @bind="_displayLimit">
+                    <option value="25">25 dòng</option>
+                    <option value="50">50 dòng</option>
+                    <option value="100">100 dòng</option>
+                    <option value="500">500 dòng</option>
+                </select>
+            </div>
+        </div>
+
+        @if (GetActiveFilteredCount() == 0)
+        {
+            <div class="Ali-empty">
+                Chưa có dữ liệu trong Database cục bộ cho mục <strong>@GetActiveTabShortName()</strong>. Bấm <strong>"⚡ Chạy Đồng Bộ (Gọi lần lượt 7 Endpoint → Lưu Database)"</strong> ở trên để đồng bộ về Database.
+            </div>
+        }
+        else if (_activeTab == "orders")
+        {
+            var rows = FilterOrders().Take(_displayLimit).ToList();
+            <div class="table-frame">
+                <table class="data-grid">
+                    <thead><tr>
+                        <th>ID</th><th>Số tài</th><th>Điện thoại KH</th><th>Họ tên KH</th><th>Trạng thái</th><th>KM</th><th>SĐT Tài xế</th><th>Tiền cước</th><th>Địa điểm</th><th>Thời điểm đặt</th><th>Ghi chú</th><th>Tỉnh</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td><span class="trip-code">@r.ID</span></td>
+                                <td><span class="trip-code">@r.DriveNo</span></td>
+                                <td>@r.CustomerPhoneNumber</td>
+                                <td>@r.CustomerFullName</td>
+                                <td>@r.Status</td>
+                                <td class="number-col">@r.Distance</td>
+                                <td>@r.DriverPhoneNumber</td>
+                                <td class="money-col">@r.Price</td>
+                                <td class="place-col" title="@r.Location">@r.Location</td>
+                                <td class="date-cell">@r.BookingTime</td>
+                                <td class="place-col" title="@r.Note">@r.Note</td>
+                                <td>@r.ProvinceName</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (_activeTab == "promotes")
+        {
+            var rows = FilterPromotes().Take(_displayLimit).ToList();
+            <div class="table-frame">
+                <table class="data-grid">
+                    <thead><tr>
+                        <th>ID</th><th>Mã đối tác</th><th>SĐT lái xe</th><th>Tiền cước</th><th>Khuyến mãi</th><th>Voucher</th><th>Giảm chiều về</th><th>Phụ phí</th><th>KH trả</th><th>Thanh toán</th><th>Ngày tạo</th><th>Tỉnh</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td><span class="trip-code">@r.ID</span></td>
+                                <td><strong>@r.PartnerCode</strong></td>
+                                <td>@r.DriverPhoneNumber</td>
+                                <td class="money-col">@r.PriceTrip</td>
+                                <td class="money-col">@r.PromotionPrice</td>
+                                <td class="money-col">@r.VoucherPrice</td>
+                                <td class="money-col">@r.ReturnDiscount</td>
+                                <td class="money-col">@r.ExtraFee</td>
+                                <td class="money-col">@r.CustomerPay</td>
+                                <td>@r.PaymentMethod</td>
+                                <td class="date-cell">@r.CreatedAt</td>
+                                <td>@r.ProvinceName</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (_activeTab == "cancels")
+        {
+            var rows = FilterCancels().Take(_displayLimit).ToList();
+            <div class="table-frame">
+                <table class="data-grid">
+                    <thead><tr>
+                        <th>ID</th><th>Số tài</th><th>Nguồn</th><th>SĐT KH</th><th>Trạng thái</th><th>KM</th><th>Giá</th><th>Địa điểm</th><th>Thời điểm đặt</th><th>Ghi chú</th><th>Tỉnh</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td><span class="trip-code">@r.ID</span></td>
+                                <td><span class="trip-code">@r.DriveNo</span></td>
+                                <td>@r.Type</td>
+                                <td>@r.CustomerPhoneNumber</td>
+                                <td>@r.Status</td>
+                                <td class="number-col">@r.Distance</td>
+                                <td class="money-col">@r.Price</td>
+                                <td class="place-col" title="@r.Location">@r.Location</td>
+                                <td class="date-cell">@r.BookingTime</td>
+                                <td class="place-col" title="@r.Note">@r.Note</td>
+                                <td>@r.ProvinceName</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (_activeTab == "switchboard")
+        {
+            var rows = FilterSwitchboards().Take(_displayLimit).ToList();
+            <div class="table-frame">
+                <table class="data-grid">
+                    <thead><tr>
+                        <th>ID</th><th>Số tài</th><th>SĐT KH</th><th>Trạng thái</th><th>KM</th><th>SĐT Tài xế</th><th>Giá</th><th>Địa điểm</th><th>Thời điểm đặt</th><th>Ghi chú</th><th>Tỉnh</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td><span class="trip-code">@r.ID</span></td>
+                                <td><span class="trip-code">@r.DriveNo</span></td>
+                                <td>@r.CustomerPhoneNumber</td>
+                                <td>@r.Status</td>
+                                <td class="number-col">@r.Distance</td>
+                                <td>@r.DriverPhoneNumber</td>
+                                <td class="money-col">@r.Price</td>
+                                <td class="place-col" title="@r.Location">@r.Location</td>
+                                <td class="date-cell">@r.BookingTime</td>
+                                <td class="place-col" title="@r.Note">@r.Note</td>
+                                <td>@r.ProvinceName</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (_activeTab == "gsm")
+        {
+            var rows = FilterPartnerGsm().Take(_displayLimit).ToList();
+            <div class="table-frame">
+                <table class="data-grid">
+                    <thead><tr>
+                        <th>ID Đối tác</th><th>ID Hệ thống</th><th>Số tài</th><th>Thời gian</th><th>SĐT KH</th><th>KM</th><th>Giá</th><th>SĐT Tài xế</th><th>Trạng thái</th><th>Điểm đón</th><th>Điểm trả</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td><span class="trip-code">@r.Id_partner</span></td>
+                                <td>@r.Id_ali</td>
+                                <td><span class="trip-code">@r.DriveNo</span></td>
+                                <td class="date-cell">@r.TripTime</td>
+                                <td>@r.CustomerPhoneNumber</td>
+                                <td class="number-col">@r.Distance</td>
+                                <td class="money-col">@r.Price</td>
+                                <td>@r.DriverPhoneNumber</td>
+                                <td>@r.TripStatus</td>
+                                <td class="place-col" title="@r.PickupLocation">@r.PickupLocation</td>
+                                <td class="place-col" title="@r.DropoffLocation">@r.DropoffLocation</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (_activeTab == "vnpay")
+        {
+            var rows = FilterPartnerVnPay().Take(_displayLimit).ToList();
+            <div class="table-frame">
+                <table class="data-grid">
+                    <thead><tr>
+                        <th>ID Đối tác</th><th>ID Hệ thống</th><th>Số tài</th><th>Biển số</th><th>Thời điểm</th><th>SĐT KH</th><th>KM</th><th>Tiền cước</th><th>Thanh toán</th><th>Điểm đón</th><th>Điểm trả</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td><span class="trip-code">@r.IdDoiTac</span></td>
+                                <td>@r.IdHeThong</td>
+                                <td><span class="trip-code">@r.SoTai</span></td>
+                                <td><span class="plate-badge">@r.BienSoXe</span></td>
+                                <td class="date-cell">@r.ThoiDiemPhatSinhCuocDi</td>
+                                <td>@r.SdtKhachHang</td>
+                                <td class="number-col">@r.QuangDuong</td>
+                                <td class="money-col">@r.TienCuoc</td>
+                                <td>@r.HinhThucThanhToan</td>
+                                <td class="place-col" title="@r.DiemDon">@r.DiemDon</td>
+                                <td class="place-col" title="@r.DiemTra">@r.DiemTra</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (_activeTab == "online")
+        {
+            var rows = FilterOnlineApps().Take(_displayLimit).ToList();
+            <div class="table-frame">
+                <table class="data-grid">
+                    <thead><tr>
+                        <th>Mã tài xế</th><th>Họ tên</th><th>SĐT</th><th>Số tài</th><th>Biển số</th><th>Đội xe</th><th>Giờ Online</th><th>Tỉnh</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td><span class="trip-code">@r.ID</span></td>
+                                <td><strong>@r.DriverName</strong></td>
+                                <td>@r.DriverPhoneNumber</td>
+                                <td><span class="trip-code">@r.DriveNo</span></td>
+                                <td><span class="plate-badge">@r.DrivePlate</span></td>
+                                <td>@r.Team</td>
+                                <td class="number-col">@r.OnlineTime</td>
+                                <td>@r.ProvinceName</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>;
+
+    private int GetActiveFilteredCount() => _activeTab switch
+    {
+        "orders" => FilterOrders().Count,
+        "promotes" => FilterPromotes().Count,
+        "cancels" => FilterCancels().Count,
+        "switchboard" => FilterSwitchboards().Count,
+        "gsm" => FilterPartnerGsm().Count,
+        "vnpay" => FilterPartnerVnPay().Count,
+        "online" => FilterOnlineApps().Count,
+        _ => 0
+    };
+
+    private string GetActiveTabShortName() => _activeTab switch
+    {
+        "orders" => "App Khách hàng",
+        "promotes" => "Khuyến mãi",
+        "cancels" => "Cuốc hủy",
+        "switchboard" => "Tổng đài HT",
+        "gsm" => "Đối tác GSM",
+        "vnpay" => "Đối tác VNPay",
+        "online" => "Online App",
+        _ => "Ali"
+    };
+
+    private string GetActiveSheetName() => _activeTab switch
+    {
+        "orders" => AliGgSheetServer.SheetAppKhachHang,
+        "promotes" => AliGgSheetServer.SheetKhuyenMai,
+        "cancels" => AliGgSheetServer.SheetCancel,
+        "switchboard" => AliGgSheetServer.SheetSwitchboard,
+        "gsm" => AliGgSheetServer.SheetPartnerGsm,
+        "vnpay" => AliGgSheetServer.SheetPartnerVnPay,
+        "online" => AliGgSheetServer.SheetOnlineApp,
+        _ => AliGgSheetServer.SheetAppKhachHang
+    };
+
+    private string GetActiveSheetUrl() => _activeTab switch
+    {
+        "orders" => $"https://docs.google.com/spreadsheets/d/{AliSheetServer.SpreadSheetId}/edit?gid=777025477#gid=777025477",
+        "promotes" => $"https://docs.google.com/spreadsheets/d/{AliSheetServer.SpreadSheetId}/edit?gid=2041033965#gid=2041033965",
+        "cancels" => $"https://docs.google.com/spreadsheets/d/{AliSheetServer.SpreadSheetId}/edit?gid=1425231531#gid=1425231531",
+        "switchboard" => $"https://docs.google.com/spreadsheets/d/{AliSheetServer.SpreadSheetId}/edit?gid=1491480516#gid=1491480516",
+        "gsm" => $"https://docs.google.com/spreadsheets/d/{AliSheetServer.SpreadSheetId}/edit?gid=521893464#gid=521893464",
+        _ => $"https://docs.google.com/spreadsheets/d/{AliSheetServer.SpreadSheetId}/edit"
+    };
+
+    private string? GetSelectedProvinceName()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedProvince) || string.Equals(_selectedProvince, "ALL", StringComparison.OrdinalIgnoreCase))
+            return null;
+        return AliService.Provinces.FirstOrDefault(p => string.Equals(p.Code, _selectedProvince, StringComparison.OrdinalIgnoreCase))?.Name;
+    }
+
+    private List<AliOrder> FilterOrders()
+    {
+        IEnumerable<AliOrder> query = _orders;
+        var provName = GetSelectedProvinceName();
+        if (!string.IsNullOrWhiteSpace(provName))
+            query = query.Where(x => string.Equals(x.ProvinceName, provName, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(_searchKeyword))
+        {
+            var kw = _searchKeyword.Trim();
+            query = query.Where(x =>
+                x.ID.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.DriveNo.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.DriverPhoneNumber.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.CustomerPhoneNumber.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.CustomerFullName.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.Location.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.ProvinceName.Contains(kw, StringComparison.OrdinalIgnoreCase));
+        }
+        return query.ToList();
+    }
+
+    private List<AliPromote> FilterPromotes()
+    {
+        IEnumerable<AliPromote> query = _promotes;
+        var provName = GetSelectedProvinceName();
+        if (!string.IsNullOrWhiteSpace(provName))
+            query = query.Where(x => string.Equals(x.ProvinceName, provName, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(_searchKeyword))
+        {
+            var kw = _searchKeyword.Trim();
+            query = query.Where(x =>
+                x.ID.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.PartnerCode.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.DriverPhoneNumber.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.ProvinceName.Contains(kw, StringComparison.OrdinalIgnoreCase));
+        }
+        return query.ToList();
+    }
+
+    private List<AliCancelOrder> FilterCancels()
+    {
+        IEnumerable<AliCancelOrder> query = _cancels;
+        var provName = GetSelectedProvinceName();
+        if (!string.IsNullOrWhiteSpace(provName))
+            query = query.Where(x => string.Equals(x.ProvinceName, provName, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(_searchKeyword))
+        {
+            var kw = _searchKeyword.Trim();
+            query = query.Where(x =>
+                x.ID.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.DriveNo.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.CustomerPhoneNumber.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.Location.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.Type.Contains(kw, StringComparison.OrdinalIgnoreCase));
+        }
+        return query.ToList();
+    }
+
+    private List<AliSwitchboard> FilterSwitchboards()
+    {
+        IEnumerable<AliSwitchboard> query = _switchboards;
+        var provName = GetSelectedProvinceName();
+        if (!string.IsNullOrWhiteSpace(provName))
+            query = query.Where(x => string.Equals(x.ProvinceName, provName, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(_searchKeyword))
+        {
+            var kw = _searchKeyword.Trim();
+            query = query.Where(x =>
+                x.ID.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.DriveNo.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.CustomerPhoneNumber.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.Location.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.Note.Contains(kw, StringComparison.OrdinalIgnoreCase));
+        }
+        return query.ToList();
+    }
+
+    private List<AliPartnerGSM> FilterPartnerGsm()
+    {
+        if (string.IsNullOrWhiteSpace(_searchKeyword)) return _partnerGsms;
+        var kw = _searchKeyword.Trim();
+        return _partnerGsms.Where(x =>
+            x.Id_partner.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            x.Id_ali.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            x.DriveNo.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            x.CustomerPhoneNumber.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            x.PickupLocation.Contains(kw, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    private List<AliPartnerVNPay> FilterPartnerVnPay()
+    {
+        if (string.IsNullOrWhiteSpace(_searchKeyword)) return _partnerVnPays;
+        var kw = _searchKeyword.Trim();
+        return _partnerVnPays.Where(x =>
+            x.IdDoiTac.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            x.IdHeThong.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            x.SoTai.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            x.BienSoXe.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            x.SdtKhachHang.Contains(kw, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    private List<AliOnlineApp> FilterOnlineApps()
+    {
+        IEnumerable<AliOnlineApp> query = _onlineApps;
+        var provName = GetSelectedProvinceName();
+        if (!string.IsNullOrWhiteSpace(provName))
+            query = query.Where(x => string.Equals(x.ProvinceName, provName, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(_searchKeyword))
+        {
+            var kw = _searchKeyword.Trim();
+            query = query.Where(x =>
+                x.ID.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.DriverName.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.DriveNo.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.DrivePlate.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                x.DriverPhoneNumber.Contains(kw, StringComparison.OrdinalIgnoreCase));
+        }
+        return query.ToList();
+    }
+
+    public void Dispose()
+    {
+        Ali.ProgressChanged -= OnProgressChanged;
+        Ali.AuthChanged -= OnAliAuthChanged;
+        Ali.LocalDataChanged -= OnLocalDataChanged;
+        AliWorker.StatusChanged -= OnWorkerChanged;
+    }
+}
+
+

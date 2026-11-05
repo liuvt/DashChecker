@@ -1,7 +1,7 @@
 namespace DashChecker.Servers.Interfaces;
 
 /// <summary>
-/// CRUD dữ liệu Google Sheet "BÁO CÁO ĐỒNG HỒ" trên vùng F2:O.
+/// CRUD dữ liệu Google Sheet "BÁO CÁO ĐỒNG HỒ" trên vùng F2:O và sheet "GPS" trên vùng A2:H.
 /// RowNumber là số dòng thật trên Google Sheet (1-based như giao diện Google Sheets).
 /// </summary>
 public interface IGgsCheckerServer
@@ -37,6 +37,15 @@ public interface IGgsCheckerServer
     /// </summary>
     Task<bool> DeleteAsync(
         int rowNumber,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Ghi đè dữ liệu GPS Online vào Google Sheet (xóa từ dòng 2 vùng A2:H rồi dán dữ liệu mới).
+    /// </summary>
+    Task<GgsCheckerAppendResult> ReplaceGpsSheetAsync(
+        IReadOnlyList<IReadOnlyList<object?>> rows,
+        string spreadsheetId = "1txl9y-tck1EwE3PKVbMIROQWZ__OK09RuJuCnpK-9q0",
+        string sheetName = "GPS",
         CancellationToken cancellationToken = default);
 }
 

@@ -58,7 +58,7 @@
                 else
                 {
                     <div class="snapshot-strip app-trip-snapshot">
-                        <div><span>Kỳ dữ liệu</span><strong>@data.FromAt.ToString("dd/MM/yyyy HH:mm") → @data.ToAt.ToString("dd/MM/yyyy HH:mm")</strong></div>
+                        <div><span>Kỳ dữ liệu</span><strong>@data.FromAt.ToString("dd/MM/yyyy HH:mm:ss") → @data.ToAt.ToString("dd/MM/yyyy HH:mm:ss")</strong></div>
                         <div><span>Thời gian tạo</span><strong>@(data.CreatedAt?.ToString("dd/MM/yyyy HH:mm:ss") ?? "—")</strong></div>
                         <div><span>Số cuốc</span><strong>@data.TotalRows.ToString("N0")</strong></div>
                     </div>
@@ -113,7 +113,7 @@
                                     @if (Show("VehicleDateKey")) { <td>@trip.VehicleDateKey</td> }
                                     @if (Show("FromPlace")) { <td class="place-col" title="@trip.FromPlaceName">@trip.FromPlaceName</td> }
                                     @if (Show("ToPlace")) { <td class="place-col" title="@trip.ToPlaceName">@trip.ToPlaceName</td> }
-                                    @if (_tab == "archive" && Show("SavedAt")) { <td>@(row.SavedAt?.ToString("dd/MM/yyyy HH:mm") ?? "")</td> }
+                                    @if (_tab == "archive" && Show("SavedAt")) { <td>@(row.SavedAt?.ToString("dd/MM/yyyy HH:mm:ss") ?? "")</td> }
                                     @if (Show("CreatedAt")) { <td class="date-cell">@row.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</td> }
                                 </tr>
                             }

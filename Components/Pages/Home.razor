@@ -1,5 +1,6 @@
 @page "/"
 @inject SkySoftReportService SkySoft
+@inject SkySoftLinkService LinkService
 @inject TaxiTripStoreService TripStore
 @inject TripDriverMatcherService DriverMatcher
 @inject IGgsCheckerServer GgsChecker
@@ -14,7 +15,7 @@
         <div>
             <div class="eyebrow">CUỐC XE</div>
             <h1>Báo cáo đồng hồ</h1>
-            <p>Dữ liệu đồng hồ theo khu vực đăng nhập. Current cho phép thêm, sửa, xóa trực tiếp như bảng tính trước khi chốt vào Kho.</p>
+            <p>Dữ liệu đồng hồ theo khu vực đang kết nối. Current cho phép thêm, sửa, xóa trực tiếp như bảng tính trước khi chốt vào Kho.</p>
         </div>
         @if (Session.Area is not null)
         {
@@ -27,8 +28,9 @@
         <section class="data-card">
             <div class="empty-state login-required">
                 <div class="empty-icon">▤</div>
-                <strong>Đăng nhập tài khoản khu vực</strong>
-                <span>Sử dụng khung đăng nhập ở đầu thanh điều hướng bên trái để mở dữ liệu Bạc Liêu hoặc Vĩnh Long.</span>
+                <strong>Chưa có tài khoản khu vực SkySoft đang chọn</strong>
+                <span>Kết nối tài khoản SkySoft trong mục Quản lý Liên kết hoặc chọn khu vực đang kết nối ở thanh điều hướng bên trái.</span>
+                <NavLink class="btn primary" href="/link-management">Mở Quản lý Liên kết</NavLink>
             </div>
         </section>
     }
@@ -113,7 +115,7 @@
                 else
                 {
                     <div class="snapshot-strip">
-                        <div><span>Kỳ dữ liệu</span><strong>@_current.FromDate.ToString("dd/MM/yyyy") 05:00 → @_current.ToDate.ToString("dd/MM/yyyy") 05:00</strong></div>
+                        <div><span>Kỳ dữ liệu</span><strong>@_current.FromDate.ToString("dd/MM/yyyy") 05:00:00 → @_current.ToDate.ToString("dd/MM/yyyy") 05:00:00</strong></div>
                         <div><span>Thời gian tạo</span><strong>@_current.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss")</strong></div>
                         <div><span>Trạng thái</span><strong class="@(_current.IsSaved ? "saved-text" : "pending-text")">@(_current.IsSaved ? $"Đã lưu {_current.SavedAt:HH:mm:ss}" : "Current chưa chốt / đã thay đổi")</strong></div>
                     </div>
@@ -323,8 +325,8 @@
         <td class="control-col"><div class="row-actions"><button class="mini-btn save-row" @onclick="SaveRowAsync" disabled="@_rowBusy">@(_rowBusy ? "Đang lưu" : "Lưu")</button><button class="mini-btn cancel" @onclick="CancelRowEdit" disabled="@_rowBusy">Hủy</button></div></td>
         @if (Show("SoHieu")) { <td><input class="grid-input short-input" @bind="_rowEditor.SoHieu" /></td> }
         @if (Show("BienSo")) { <td><input class="grid-input plate-input" @bind="_rowEditor.BienSo" /></td> }
-        @if (Show("BatDau")) { <td><input class="grid-input datetime-input" type="datetime-local" step="1" @bind="_rowEditor.BatDau" /></td> }
-        @if (Show("KetThuc")) { <td><input class="grid-input datetime-input" type="datetime-local" step="1" @bind="_rowEditor.KetThuc" /></td> }
+        @if (Show("BatDau")) { <td><input class="grid-input datetime-input time-24h-input" type="text" placeholder="dd/MM/yyyy HH:mm:ss" @bind="_rowEditor.BatDauText" /></td> }
+        @if (Show("KetThuc")) { <td><input class="grid-input datetime-input time-24h-input" type="text" placeholder="dd/MM/yyyy HH:mm:ss" @bind="_rowEditor.KetThucText" /></td> }
         @if (Show("KmCoKhach")) { <td><input class="grid-input number-input" type="number" step="0.01" @bind="_rowEditor.KmCoKhach" /></td> }
         @if (Show("KmRong")) { <td><input class="grid-input number-input" type="number" step="0.01" @bind="_rowEditor.KmRong" /></td> }
         @if (Show("TongKm")) { <td><input class="grid-input number-input" type="number" step="0.01" @bind="_rowEditor.TongKm" /></td> }
@@ -446,11 +448,20 @@
 
     private async Task UpdateAsync()
     {
-        if (Session.Area is null || !SkySoft.IsLoggedIn || HasPendingEdit) return;
+        if (Session.Area is null || HasPendingEdit) return;
         _message = _error = null;
         try
         {
             _updating = true;
+            if (!SkySoft.IsLoggedIn)
+            {
+                var creds = await LinkService.GetAreaAppCredentialsAsync(Session.Area.AreaCode);
+                if (creds is null)
+                {
+                    throw new InvalidOperationException($"Khu vực {Session.Area.AreaName} ({Session.Area.AreaCode}) chưa lưu mật khẩu Authentication App trong mục Quản lý Liên kết.");
+                }
+                await SkySoft.LoginAsync(creds.Value.UserName, creds.Value.Password, rememberPassword: true);
+            }
             var report = await SkySoft.FetchRecentTaxiTripsAsync();
             await TripStore.ReplaceCurrentAsync(Session.Area, report);
             await DriverMatcher.RefreshCurrentTripAssignmentsAsync(Session.Area);

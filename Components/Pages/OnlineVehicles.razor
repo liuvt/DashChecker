@@ -1,6 +1,7 @@
 @page "/online-vehicles"
 @inject SkySoftAppService OnlineApi
 @inject OnlineAppStoreService Store
+@inject IGgsCheckerServer GgsChecker
 @inject AppSessionService Session
 @implements IDisposable
 
@@ -22,14 +23,33 @@
     }
     else
     {
+        var activeData = _tab == "current" ? _current : _archive;
         <section class="data-card">
             <div class="data-toolbar">
-                <div><h2>@Session.Area.AreaName · GPS Online</h2><p>API: <strong>online_taxi</strong></p></div>
+                <div><h2>@Session.Area.AreaName · GPS Online</h2><p>API: <strong>online_taxi</strong> · Sheet: <strong>GPS</strong> (A2:H)</p></div>
                 <div class="toolbar-actions">
                     <button class="btn primary" @onclick="RefreshAsync" disabled="@_busy">
                         @if (_updating) { <span class="spinner"></span><span>Đang cập nhật</span> } else { <span>↻ Cập nhật Current</span> }
                     </button>
-                    @if ((_current?.TotalRows ?? 0) > 0) { <button class="btn save" @onclick="() => _confirmSave = true" disabled="@_busy"><span>✓ Chốt & Lưu Kho</span></button> }
+                    @if ((_current?.TotalRows ?? 0) > 0)
+                    {
+                        <button class="btn save" @onclick="() => _confirmSave = true" disabled="@_busy">
+                            <span>✓ Chốt & Lưu Kho</span>
+                        </button>
+                    }
+                    @if ((activeData?.TotalRows ?? _current?.TotalRows ?? 0) > 0)
+                    {
+                        <button class="btn secondary" @onclick="SaveGoogleSheetAsync" disabled="@_busy">
+                            @if (_savingGoogleSheet)
+                            {
+                                <span class="spinner dark"></span><span>Đang lưu Google Sheet...</span>
+                            }
+                            else
+                            {
+                                <span>⇧ Lưu Vào Google Sheet</span>
+                            }
+                        </button>
+                    }
                 </div>
             </div>
 
@@ -37,8 +57,8 @@
             @if (!string.IsNullOrWhiteSpace(_error)) { <div class="inline-message error data-message">@_error</div> }
 
             <div class="data-tabs">
-                <button class="data-tab @(_tab == "current" ? "active" : "")" @onclick='() => SwitchTabAsync("current")'>Current <span class="tab-count">@(_current?.TotalRows ?? 0)</span></button>
-                <button class="data-tab @(_tab == "archive" ? "active" : "")" @onclick='() => SwitchTabAsync("archive")'>Kho lưu trữ <span class="tab-count">@(_archive?.TotalRows ?? 0)</span></button>
+                <button class="data-tab @(_tab == "current" ? "active" : "")" @onclick='() => SwitchTabAsync("current")' disabled="@_busy">Current <span class="tab-count">@(_current?.TotalRows ?? 0)</span></button>
+                <button class="data-tab @(_tab == "archive" ? "active" : "")" @onclick='() => SwitchTabAsync("archive")' disabled="@_busy">Kho lưu trữ <span class="tab-count">@(_archive?.TotalRows ?? 0)</span></button>
             </div>
 
             @if (_loading)
@@ -61,22 +81,74 @@
                     </div>
 
                     <div class="grid-tools">
-                        <div class="search-box"><span class="search-icon">⌕</span><input @bind="_search" placeholder="Tìm số tài, biển số, vehicle code/id..." /><button class="btn secondary compact" @onclick="SearchAsync">Tìm</button></div>
-                        <div class="table-options"><ColumnPicker Columns="@_columns" Changed="RefreshColumns" /><div class="result-count"><strong>@data.TotalRows.ToString("N0")</strong> xe</div></div>
+                        <div class="search-box">
+                            <span class="search-icon">⌕</span>
+                            <input @bind="_search" @bind:event="oninput" @onkeydown="OnSearchKeyDownAsync" placeholder="Tìm số tài, biển số, vehicle code/id..." />
+                            <button class="btn secondary compact" @onclick="SearchAsync" disabled="@_busy">Tìm</button>
+                        </div>
+                        <div class="table-options">
+                            <ColumnPicker Columns="@_columns" Changed="RefreshColumns" />
+                            <div class="result-count"><strong>@data.TotalRows.ToString("N0")</strong> xe</div>
+                        </div>
                     </div>
 
                     <div class="table-frame">
                         <table class="data-grid online-vehicle-grid">
                             <thead><tr>
-                                @if (Show("VehicleNo")) { <th>Số tài</th> }
-                                @if (Show("PlateNo")) { <th>Biển số</th> }
-                                @if (Show("VehicleCode")) { <th>Vehicle Code</th> }
-                                @if (Show("VehicleId")) { <th>Vehicle ID</th> }
-                                @if (Show("Signal")) { <th>Tín hiệu GPS</th> }
-                                @if (Show("GpsDate")) { <th>GPS Date</th> }
-                                @if (Show("UpdateDate")) { <th>Update Date</th> }
-                                @if (_tab == "archive" && Show("SavedAt")) { <th>SavedAt</th> }
-                                @if (Show("CreatedAt")) { <th>Thời gian tạo</th> }
+                                @if (Show("VehicleNo"))
+                                {
+                                    <th class="sortable-th @(IsSortedBy("VehicleNo") ? "sorted" : "")" @onclick='() => SortByAsync("VehicleNo")' title="Bấm để sắp xếp theo Số tài">
+                                        <span class="th-sort-wrap"><span>Số tài</span><span class="sort-indicator">@GetSortIcon("VehicleNo")</span></span>
+                                    </th>
+                                }
+                                @if (Show("PlateNo"))
+                                {
+                                    <th class="sortable-th @(IsSortedBy("PlateNo") ? "sorted" : "")" @onclick='() => SortByAsync("PlateNo")' title="Bấm để sắp xếp theo Biển số">
+                                        <span class="th-sort-wrap"><span>Biển số</span><span class="sort-indicator">@GetSortIcon("PlateNo")</span></span>
+                                    </th>
+                                }
+                                @if (Show("VehicleCode"))
+                                {
+                                    <th class="sortable-th @(IsSortedBy("VehicleCode") ? "sorted" : "")" @onclick='() => SortByAsync("VehicleCode")' title="Bấm để sắp xếp theo Vehicle Code">
+                                        <span class="th-sort-wrap"><span>Vehicle Code</span><span class="sort-indicator">@GetSortIcon("VehicleCode")</span></span>
+                                    </th>
+                                }
+                                @if (Show("VehicleId"))
+                                {
+                                    <th class="sortable-th @(IsSortedBy("VehicleId") ? "sorted" : "")" @onclick='() => SortByAsync("VehicleId")' title="Bấm để sắp xếp theo Vehicle ID">
+                                        <span class="th-sort-wrap"><span>Vehicle ID</span><span class="sort-indicator">@GetSortIcon("VehicleId")</span></span>
+                                    </th>
+                                }
+                                @if (Show("Signal"))
+                                {
+                                    <th class="sortable-th @(IsSortedBy("Signal") ? "sorted" : "")" @onclick='() => SortByAsync("Signal")' title="Bấm để sắp xếp theo Tín hiệu GPS">
+                                        <span class="th-sort-wrap"><span>Tín hiệu GPS</span><span class="sort-indicator">@GetSortIcon("Signal")</span></span>
+                                    </th>
+                                }
+                                @if (Show("GpsDate"))
+                                {
+                                    <th class="sortable-th @(IsSortedBy("GpsDate") ? "sorted" : "")" @onclick='() => SortByAsync("GpsDate")' title="Bấm để sắp xếp theo GPS Date">
+                                        <span class="th-sort-wrap"><span>GPS Date</span><span class="sort-indicator">@GetSortIcon("GpsDate")</span></span>
+                                    </th>
+                                }
+                                @if (Show("UpdateDate"))
+                                {
+                                    <th class="sortable-th @(IsSortedBy("UpdateDate") ? "sorted" : "")" @onclick='() => SortByAsync("UpdateDate")' title="Bấm để sắp xếp theo Update Date">
+                                        <span class="th-sort-wrap"><span>Update Date</span><span class="sort-indicator">@GetSortIcon("UpdateDate")</span></span>
+                                    </th>
+                                }
+                                @if (_tab == "archive" && Show("SavedAt"))
+                                {
+                                    <th class="sortable-th @(IsSortedBy("SavedAt") ? "sorted" : "")" @onclick='() => SortByAsync("SavedAt")' title="Bấm để sắp xếp theo SavedAt">
+                                        <span class="th-sort-wrap"><span>SavedAt</span><span class="sort-indicator">@GetSortIcon("SavedAt")</span></span>
+                                    </th>
+                                }
+                                @if (Show("CreatedAt"))
+                                {
+                                    <th class="sortable-th @(IsSortedBy("CreatedAt") ? "sorted" : "")" @onclick='() => SortByAsync("CreatedAt")' title="Bấm để sắp xếp theo Thời gian tạo">
+                                        <span class="th-sort-wrap"><span>Thời gian tạo</span><span class="sort-indicator">@GetSortIcon("CreatedAt")</span></span>
+                                    </th>
+                                }
                             </tr></thead>
                             <tbody>
                             @foreach (var row in data.Rows)
@@ -86,7 +158,7 @@
                                     @if (Show("PlateNo")) { <td><span class="plate-badge">@row.Vehicle.PlateNo</span></td> }
                                     @if (Show("VehicleCode")) { <td>@row.Vehicle.VehicleCode</td> }
                                     @if (Show("VehicleId")) { <td>@row.Vehicle.VehicleId</td> }
-                                    @if (Show("Signal")) { <td><span class="gps-signal @(row.Vehicle.GpsDate.HasValue ? "on" : "off")"><span class="status-dot"></span>@(row.Vehicle.GpsDate.HasValue ? "Có tín hiệu" : "Không tín hiệu")</span></td> }
+                                    @if (Show("Signal")) { <td><span class="gps-signal @(row.HasActiveGpsSignal ? "on" : "off")"><span class="status-dot"></span>@row.GpsSignalText</span></td> }
                                     @if (Show("GpsDate")) { <td>@(row.Vehicle.GpsDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "—")</td> }
                                     @if (Show("UpdateDate")) { <td>@(row.Vehicle.UpdateDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "—")</td> }
                                     @if (_tab == "archive" && Show("SavedAt")) { <td>@(row.SavedAt?.ToString("dd/MM/yyyy HH:mm") ?? "")</td> }
@@ -96,7 +168,7 @@
                             </tbody>
                         </table>
                     </div>
-                    <div class="pager"><span>Trang @data.Page / @data.TotalPages · @data.TotalRows.ToString("N0") xe</span><div><button class="btn secondary compact" disabled="@(data.Page <= 1)" @onclick="PreviousAsync">← Trước</button><button class="btn secondary compact" disabled="@(data.Page >= data.TotalPages)" @onclick="NextAsync">Sau →</button></div></div>
+                    <div class="pager"><span>Trang @data.Page / @data.TotalPages · @data.TotalRows.ToString("N0") xe</span><div><button class="btn secondary compact" disabled="@(data.Page <= 1 || _busy)" @onclick="PreviousAsync">← Trước</button><button class="btn secondary compact" disabled="@(data.Page >= data.TotalPages || _busy)" @onclick="NextAsync">Sau →</button></div></div>
                 }
             }
         </section>
@@ -115,10 +187,15 @@
 }
 
 @code {
+    private const string GpsSpreadsheetId = "1txl9y-tck1EwE3PKVbMIROQWZ__OK09RuJuCnpK-9q0";
+    private const string GpsSheetName = "GPS";
+
     private string _tab = "current";
     private string _search = "";
-    private bool _loading, _updating, _saving, _confirmSave;
-    private bool _busy => _loading || _updating || _saving;
+    private string _sortBy = "VehicleNo";
+    private bool _sortDesc;
+    private bool _loading, _updating, _saving, _savingGoogleSheet, _confirmSave;
+    private bool _busy => _loading || _updating || _saving || _savingGoogleSheet;
     private string? _message, _error;
     private OnlineVehicleSnapshot? _current, _archive;
     private readonly List<ColumnOption> _columns =
@@ -135,17 +212,25 @@
         if (Session.Area is not null) await LoadAsync();
     }
 
-    private void OnSessionChanged() => _ = InvokeAsync(async () => { _current = null; _archive = null; if (Session.Area is not null) await LoadAsync(); StateHasChanged(); });
+    private void OnSessionChanged() => _ = InvokeAsync(async () =>
+    {
+        _current = null;
+        _archive = null;
+        if (Session.Area is not null) await LoadAsync();
+        StateHasChanged();
+    });
 
     private async Task RefreshAsync()
     {
         if (Session.Area is null) return;
-        _error = _message = null; _updating = true;
+        _error = _message = null;
+        _updating = true;
         try
         {
             var rows = await OnlineApi.GetOnlineVehiclesAsync(Session.Area.AreaCode);
             await Store.ReplaceOnlineVehicleCurrentAsync(Session.Area, rows);
-            _tab = "current"; _search = "";
+            _tab = "current";
+            _search = "";
             await LoadAsync();
             _message = $"Đã cập nhật {rows.Count:N0} xe GPS vào Current. Kho chưa thay đổi.";
         }
@@ -156,10 +241,103 @@
     private async Task SaveAsync()
     {
         if (Session.Area is null) return;
-        _saving = true; _confirmSave = false; _error = _message = null;
-        try { var count = await Store.SaveOnlineVehicleCurrentToArchiveAsync(Session.Area); await LoadAsync(); _message = $"Đã chốt {count:N0} xe GPS vào Kho."; }
+        _saving = true;
+        _confirmSave = false;
+        _error = _message = null;
+        try
+        {
+            var count = await Store.SaveOnlineVehicleCurrentToArchiveAsync(Session.Area);
+            await LoadAsync();
+            _message = $"Đã chốt {count:N0} xe GPS vào Kho.";
+        }
         catch (Exception ex) { _error = ex.Message; }
         finally { _saving = false; }
+    }
+
+    private async Task SaveGoogleSheetAsync()
+    {
+        if (Session.Area is null || _busy)
+            return;
+
+        _savingGoogleSheet = true;
+        _error = _message = null;
+        try
+        {
+            var targetTab = (_tab == "archive" && (_current?.TotalRows ?? 0) == 0) ? "archive" : _tab;
+            var rows = await Store.GetAllOnlineVehiclesForExportAsync(
+                Session.Area,
+                targetTab,
+                _sortBy,
+                _sortDesc);
+
+            if (rows.Count == 0 && targetTab != "current")
+            {
+                rows = await Store.GetAllOnlineVehiclesForExportAsync(
+                    Session.Area,
+                    "current",
+                    _sortBy,
+                    _sortDesc);
+            }
+
+            if (rows.Count == 0)
+            {
+                _error = "Chưa có dữ liệu GPS Online để lưu vào Google Sheet.";
+                return;
+            }
+
+            var googleRows = rows
+                .Select(x => x.ToGoogleSheetValues())
+                .ToList();
+
+            var result = await GgsChecker.ReplaceGpsSheetAsync(
+                googleRows,
+                GpsSpreadsheetId,
+                GpsSheetName);
+
+            _message =
+                $"Đã xóa dữ liệu cũ từ dòng 2 và ghi đè {result.Count:N0} xe lên Google Sheet " +
+                $"'{GpsSheetName}' (vùng A{result.StartRow}:H{result.EndRow}).";
+        }
+        catch (Exception ex)
+        {
+            _error = $"Lưu Google Sheet thất bại: {ex.Message}";
+        }
+        finally
+        {
+            _savingGoogleSheet = false;
+        }
+    }
+
+    private async Task SortByAsync(string columnKey)
+    {
+        if (_busy) return;
+        if (string.Equals(_sortBy, columnKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _sortDesc = !_sortDesc;
+        }
+        else
+        {
+            _sortBy = columnKey;
+            _sortDesc = false;
+        }
+
+        await LoadAsync(1);
+    }
+
+    private bool IsSortedBy(string columnKey) =>
+        string.Equals(_sortBy, columnKey, StringComparison.OrdinalIgnoreCase);
+
+    private string GetSortIcon(string columnKey)
+    {
+        if (!IsSortedBy(columnKey))
+            return "↕";
+        return _sortDesc ? "↓" : "↑";
+    }
+
+    private async Task OnSearchKeyDownAsync(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await SearchAsync();
     }
 
     private async Task SwitchTabAsync(string tab) { _tab = tab; _search = ""; await LoadAsync(); }
@@ -174,8 +352,10 @@
         _loading = true;
         try
         {
-            if (_tab == "current") _current = await Store.GetOnlineVehicleCurrentAsync(Session.Area, page, 100, _search);
-            else _archive = await Store.GetOnlineVehicleArchiveAsync(Session.Area, page, 100, _search);
+            if (_tab == "current")
+                _current = await Store.GetOnlineVehicleCurrentAsync(Session.Area, page, 100, _search, _sortBy, _sortDesc);
+            else
+                _archive = await Store.GetOnlineVehicleArchiveAsync(Session.Area, page, 100, _search, _sortBy, _sortDesc);
         }
         finally { _loading = false; }
     }

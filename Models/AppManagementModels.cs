@@ -10,13 +10,30 @@ public sealed record AppModuleDefinition(string Key, string Title, string ShortT
     public static readonly IReadOnlyDictionary<string, AppModuleDefinition> All =
         new Dictionary<string, AppModuleDefinition>(StringComparer.OrdinalIgnoreCase)
         {
+            ["customer-app"] = new(
+                "customer-app", "App Khách Hàng", "App Khách Hàng",
+                [
+                    new("Id", "ID"),
+                    new("CustomerPhone", "Điện thoại KH"),
+                    new("CustomerName", "Họ tên"),
+                    new("TripStatus", "Trạng thái"),
+                    new("Km", "KM", "number", "number-col"),
+                    new("DriverPhone", "Điện thoại tài xế"),
+                    new("VehicleNo", "Số tài"),
+                    new("Fare", "Tiền cước", "number", "money-col"),
+                    new("Location", "Địa điểm", "text", "wide-text-col"),
+                    new("BookingTime", "Thời điểm đặt xe / lên xuống xe (HH:mm:ss)", "text", "datetime-col"),
+                    new("Note", "Ghi chú", "text", "wide-text-col"),
+                    new("DataStatus", "Trạng Thái dữ liệu")
+                ]),
+
             ["vnpay"] = new(
                 "vnpay", "App VNPay", "VNPay",
                 [
                     new("PartnerId", "ID ĐỐI TÁC"),
                     new("CompanyId", "ID CÔNG TY"),
                     new("SystemId", "ID HỆ THỐNG"),
-                    new("TripOccurredAt", "Thời điểm phát sinh cuốc đi", "datetime-local", "datetime-col"),
+                    new("TripOccurredAt", "Thời điểm phát sinh cuốc đi (HH:mm:ss)", "text", "datetime-col"),
                     new("CustomerPhone", "SĐT khách hàng"),
                     new("CustomerName", "Tên khách hàng"),
                     new("Distance", "Quãng đường", "number", "number-col"),
@@ -51,23 +68,6 @@ public sealed record AppModuleDefinition(string Key, string Title, string ShortT
                     new("PaymentMethod", "Phương thức thanh toán")
                 ]),
 
-            ["customer-app"] = new(
-                "customer-app", "App Khách Hàng", "App Khách Hàng",
-                [
-                    new("Id", "ID"),
-                    new("CustomerPhone", "Điện thoại KH"),
-                    new("CustomerName", "Họ tên"),
-                    new("TripStatus", "Trạng thái"),
-                    new("Km", "KM", "number", "number-col"),
-                    new("DriverPhone", "Điện thoại tài xế"),
-                    new("VehicleNo", "Số tài"),
-                    new("Fare", "Tiền cước", "number", "money-col"),
-                    new("Location", "Địa điểm", "text", "wide-text-col"),
-                    new("BookingTime", "Thời điểm đặt xe / lên xuống xe", "datetime-local", "datetime-col"),
-                    new("Note", "Ghi chú", "text", "wide-text-col"),
-                    new("DataStatus", "Trạng Thái dữ liệu")
-                ]),
-
             ["xanh-sm"] = new(
                 "xanh-sm", "App Xanh SM", "Xanh SM",
                 [
@@ -81,7 +81,7 @@ public sealed record AppModuleDefinition(string Key, string Title, string ShortT
                     new("TotalFeeDisplay", "Total Fee Display", "number", "money-col"),
                     new("TotalPayDisplay", "Total Pay Display", "number", "money-col"),
                     new("TipAmount", "Tip Amount", "number", "money-col"),
-                    new("BookingTime", "Thời điểm đặt xe / lên xuống xe", "datetime-local", "datetime-col"),
+                    new("BookingTime", "Thời điểm đặt xe / lên xuống xe (HH:mm:ss)", "text", "datetime-col"),
                     new("PaymentMethod", "Payment Method"),
                     new("Note", "Ghi chú", "text", "wide-text-col"),
                     new("DataStatus", "Trạng Thái dữ liệu")
@@ -92,7 +92,7 @@ public sealed record AppModuleDefinition(string Key, string Title, string ShortT
                 [
                     new("Id", "ID"),
                     new("Date", "Ngày", "date", "date-col"),
-                    new("Time", "Giờ", "time", "time-col"),
+                    new("Time", "Giờ (HH:mm:ss)", "text", "time-col"),
                     new("VehicleNo", "Số Tài"),
                     new("Pickup", "Đón", "text", "wide-text-col"),
                     new("Dropoff", "Trả", "text", "wide-text-col"),

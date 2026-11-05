@@ -17,6 +17,34 @@ public sealed class TaxiTripCurrentEditModel
     public string DiemDau { get; set; } = string.Empty;
     public string DiemCuoi { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Chuỗi ngày giờ chuẩn 24h "dd/MM/yyyy HH:mm:ss" (không dùng AM/PM).
+    /// </summary>
+    public string BatDauText
+    {
+        get => BatDau.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture);
+        set
+        {
+            var parsed = value.ltvStringToDateTime(CultureInfo.InvariantCulture);
+            if (parsed.HasValue)
+                BatDau = parsed.Value;
+        }
+    }
+
+    /// <summary>
+    /// Chuỗi ngày giờ chuẩn 24h "dd/MM/yyyy HH:mm:ss" (không dùng AM/PM).
+    /// </summary>
+    public string KetThucText
+    {
+        get => KetThuc.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture);
+        set
+        {
+            var parsed = value.ltvStringToDateTime(CultureInfo.InvariantCulture);
+            if (parsed.HasValue)
+                KetThuc = parsed.Value;
+        }
+    }
+
     public static TaxiTripCurrentEditModel CreateNew() => new()
     {
         BatDau = VietnamClock.Now.Date.AddHours(5),
@@ -36,6 +64,7 @@ public sealed class TaxiTripCurrentEditModel
         DiemDau = row.DiemDau,
         DiemCuoi = row.DiemCuoi
     };
+
     /// <summary>
     /// Map đúng 10 cột Google Sheet BÁO CÁO ĐỒNG HỒ: F..O.
     /// F Số hiệu, G Biển số, H Bắt đầu, I Kết thúc, J KM có khách,
@@ -54,5 +83,4 @@ public sealed class TaxiTripCurrentEditModel
         DiemDau,
         DiemCuoi
     };
-
 }

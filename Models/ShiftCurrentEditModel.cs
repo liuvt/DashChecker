@@ -1,3 +1,6 @@
+using System.Globalization;
+using DashChecker.Extensions;
+
 namespace DashChecker.Models;
 
 public sealed class ShiftCurrentEditModel
@@ -16,9 +19,26 @@ public sealed class ShiftCurrentEditModel
     public string LyDoXuongCa { get; set; } = string.Empty;
     public string GhiChu { get; set; } = string.Empty;
 
-    // Blazor .NET 9 bind <input type="time"> về TimeOnly?.
-    // Nullable giúp control vẫn xử lý được trạng thái rỗng và service sẽ validate khi Lưu.
     public TimeOnly? SourceTime { get; set; } = new TimeOnly(5, 0, 0);
+
+    /// <summary>
+    /// Chuỗi giờ chuẩn 24h HH:mm:ss (không dùng AM/PM) để bind trực tiếp trên giao diện.
+    /// </summary>
+    public string SourceTimeText
+    {
+        get => (SourceTime ?? new TimeOnly(5, 0, 0)).ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        set
+        {
+            var ts = value.ltvStringToTimeSpan();
+            if (ts.HasValue)
+            {
+                SourceTime = new TimeOnly(
+                    Math.Clamp(ts.Value.Hours, 0, 23),
+                    Math.Clamp(ts.Value.Minutes, 0, 59),
+                    Math.Clamp(ts.Value.Seconds, 0, 59));
+            }
+        }
+    }
 
     public string HinhThucLuong { get; set; } = string.Empty;
 

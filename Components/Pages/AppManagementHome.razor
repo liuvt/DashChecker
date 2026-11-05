@@ -1,29 +1,40 @@
 @page "/app-management"
+@using DashChecker.Models
+@using DashChecker.Services
 @inject AppSessionService Session
+@inject AliWorkerService AliWorker
+@implements IDisposable
 
 <PageTitle>DashChecker - Quản lý App</PageTitle>
 
 <div class="page-shell app-management-home">
     <section class="page-header compact-page-header">
         <div>
-            <div class="eyebrow">DASHCHECKER • QUẢN LÝ APP</div>
+            <div class="eyebrow">DASHCHECKER • ĐỐI SOÁT ỨNG DỤNG &amp; ALI</div>
             <h1>Quản lý App</h1>
-            <p>Chọn bảng dữ liệu cần thao tác. Mỗi phần có Current, chỉnh sửa kiểu bảng tính và Kho lưu trữ riêng theo khu vực.</p>
+            <p>Chọn phân hệ dữ liệu cần thao tác. Tích hợp <strong>Ali (admin.nhaxeviet.vn)</strong> hỗ trợ chạy hẹn giờ tự động, tìm kiếm dữ liệu 9 tỉnh và ghi vào Google Sheet.</p>
         </div>
-        @if (Session.Area is not null)
-        {
-            <div class="area-pill">@Session.Area.AreaCode · @Session.Area.AreaName</div>
-        }
+        <div class="header-badges">
+            <span class="ali-worker-pill @(AliWorker.IsRunning ? "running" : "stopped")">
+                <span class="status-dot @(AliWorker.IsRunning ? "pulse" : "")"></span>
+                Hẹn giờ Ali: @(AliWorker.IsRunning ? "ĐANG CHẠY" : "ĐANG DỪNG")
+            </span>
+            @if (Session.Area is not null)
+            {
+                <div class="area-pill">@Session.Area.AreaCode · @Session.Area.AreaName</div>
+            }
+        </div>
     </section>
 
     <section class="app-module-grid">
         @foreach (var module in AppModuleDefinition.All.Values)
         {
-            <NavLink class="app-module-card" href="@($"/app-management/{module.Key}")">
-                <div class="app-module-icon">@ModuleIcon(module.Key)</div>
+            var cardClass = module.Key == "ali" ? "app-module-card featured-module-card" : "app-module-card";
+            <NavLink class="@cardClass" href="@($"/app-management/{module.Key}")">
+                <div class="app-module-icon @($"icon-{module.Key}")">@ModuleIcon(module.Key)</div>
                 <div>
                     <strong>@module.Title</strong>
-                    <span>@module.Columns.Count cột dữ liệu · Current + Kho</span>
+                    <span>@ModuleSubtitle(module)</span>
                 </div>
                 <b>→</b>
             </NavLink>
@@ -32,8 +43,16 @@
 </div>
 
 @code {
+    protected override void OnInitialized()
+    {
+        AliWorker.StatusChanged += OnWorkerChanged;
+    }
+
+    private void OnWorkerChanged() => _ = InvokeAsync(StateHasChanged);
+
     private static string ModuleIcon(string key) => key switch
     {
+        "ali" => "AL",
         "vnpay" => "VN",
         "customer-promo" => "%",
         "customer-app" => "KH",
@@ -41,4 +60,16 @@
         "contracts" => "HĐ",
         _ => "▦"
     };
+
+    private static string ModuleSubtitle(AppModuleDefinition module) => module.Key switch
+    {
+        "ali" => "Chạy hẹn giờ 7 mốc · Search 9 tỉnh · Ghi Google Sheet & Current",
+        "customer-app" => $"{module.Columns.Count} cột · Tích hợp Ali Search & Google Sheet (APP KHÁCH HÀNG)",
+        "customer-promo" => $"{module.Columns.Count} cột · Tích hợp Ali & Google Sheet (KHUYẾN MÃI)",
+        "vnpay" => $"{module.Columns.Count} cột · Tích hợp Ali & Google Sheet (ĐỐI TÁC VNPAY)",
+        "xanh-sm" => $"{module.Columns.Count} cột · Tích hợp Ali & Google Sheet (ĐỐI TÁC GSM)",
+        _ => $"{module.Columns.Count} cột dữ liệu · Bảng tính Current & Kho lưu trữ"
+    };
+
+    public void Dispose() => AliWorker.StatusChanged -= OnWorkerChanged;
 }

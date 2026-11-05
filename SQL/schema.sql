@@ -239,3 +239,56 @@ CREATE TABLE IF NOT EXISTS AppTripArchives (
     CreatedAt TEXT NOT NULL,
     SavedAt TEXT NOT NULL
 );
+
+
+-- ================================================================
+-- QUẢN LÝ LIÊN KẾT SKYSOFT & NHÓM DỮ LIỆU CHUNG (BIỂN SỐ - SỐ HIỆU)
+-- ================================================================
+CREATE TABLE IF NOT EXISTS SkySoftLinkAccounts (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    AreaCode TEXT NOT NULL,
+    AreaName TEXT NOT NULL,
+    AppBaseUrl TEXT NOT NULL DEFAULT 'https://go.skysoft.vn/',
+    UserName TEXT NOT NULL DEFAULT '',
+    ProtectedPassword TEXT NOT NULL DEFAULT '',
+    DeviceId TEXT NOT NULL DEFAULT '',
+    DeviceName TEXT NOT NULL DEFAULT 'chrome',
+    DeviceBrand TEXT NOT NULL DEFAULT 'Google Inc.',
+    DeviceModel TEXT NOT NULL DEFAULT '',
+    AppOs TEXT NOT NULL DEFAULT 'web',
+    OsVersion TEXT NOT NULL DEFAULT '',
+    AppVersion TEXT NOT NULL DEFAULT '1.0.58',
+    ApiBaseUrl TEXT NOT NULL DEFAULT 'https://data.skysoft.vn/rest/api/',
+    ApiUserName TEXT NOT NULL DEFAULT '',
+    ApiKey TEXT NOT NULL DEFAULT '',
+    ProtectedApiToken TEXT NOT NULL DEFAULT '',
+    TimeoutSeconds INTEGER NOT NULL DEFAULT 300,
+    MinOccupiedKm TEXT NOT NULL DEFAULT '19.49',
+    MatchToleranceMinutes INTEGER NOT NULL DEFAULT 15,
+    Notes TEXT NOT NULL DEFAULT '',
+    FilterCrossProvinceDuplicates INTEGER NOT NULL DEFAULT 1,
+    IsConnected INTEGER NOT NULL DEFAULT 0,
+    LastConnectedAt TEXT NULL,
+    LastStatusMessage TEXT NOT NULL DEFAULT 'Chưa kết nối',
+    UpdatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS SharedVehicleRegistries (
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    PlateNo TEXT NOT NULL,
+    PlateNoNormalized TEXT NOT NULL,
+    VehicleNo TEXT NOT NULL,
+    VehicleNoNormalized TEXT NOT NULL,
+    VehicleKeyComposite TEXT NOT NULL UNIQUE,
+    VehicleId TEXT NOT NULL DEFAULT '',
+    VehicleCode TEXT NOT NULL DEFAULT '',
+    PrimaryAreaCode TEXT NOT NULL DEFAULT '',
+    SourceAreas TEXT NOT NULL DEFAULT '',
+    DuplicateCount INTEGER NOT NULL DEFAULT 1,
+    GpsDate TEXT NULL,
+    UpdateDate TEXT NULL,
+    IsExcluded INTEGER NOT NULL DEFAULT 0,
+    ExcludeReason TEXT NOT NULL DEFAULT '',
+    FetchedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL
+);

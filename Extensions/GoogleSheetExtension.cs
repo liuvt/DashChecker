@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Google.Apis.Sheets.v4;
 using Google.Apis.Sheets.v4.Data;
 
@@ -249,7 +250,7 @@ public static class GoogleSheetExtension
     }
 
     /// <summary>
-    /// Chuyển chuỗi ngày/giờ theo nhiều format phổ biến thành DateTime?.
+    /// Chuyển chuỗi ngày/giờ theo nhiều format phổ biến thành DateTime? (chuẩn 24h, tự động chuyển đổi nếu nguồn có AM/PM).
     /// </summary>
     public static DateTime? ltvStringToDateTime(this string? input, CultureInfo? culture = null)
     {
@@ -257,6 +258,7 @@ public static class GoogleSheetExtension
             return null;
 
         culture ??= CultureInfo.InvariantCulture;
+        var cleaned = NormalizeVietnameseMeridiem(input.Trim());
 
         string[] formats =
         [
@@ -266,42 +268,167 @@ public static class GoogleSheetExtension
             "H:mm dd/MM/yyyy",
             "HH:mm:ss - dd/MM/yyyy",
             "HH:mm - dd/MM/yyyy",
+            "H:mm:ss - dd/MM/yyyy",
+            "H:mm - dd/MM/yyyy",
             "dd/MM/yyyy HH:mm:ss",
             "dd/MM/yyyy HH:mm",
             "d/M/yyyy H:mm:ss",
             "d/M/yyyy H:mm",
+            "dd-MM-yyyy HH:mm:ss",
+            "dd-MM-yyyy HH:mm",
+            "d-M-yyyy H:mm:ss",
+            "d-M-yyyy H:mm",
+            "dd/MM/yyyy hh:mm:ss tt",
+            "dd/MM/yyyy h:mm:ss tt",
+            "dd/MM/yyyy hh:mm tt",
+            "dd/MM/yyyy h:mm tt",
+            "d/M/yyyy h:mm:ss tt",
+            "d/M/yyyy h:mm tt",
+            "MM/dd/yyyy hh:mm:ss tt",
+            "M/d/yyyy h:mm:ss tt",
             "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm",
             "yyyy-MM-ddTHH:mm:ss",
+            "yyyy-MM-ddTHH:mm",
             "yyyy-MM-dd",
             "dd/MM/yyyy",
             "d/M/yyyy",
             "MM/dd/yyyy"
         ];
 
-        if (DateTime.TryParseExact(input.Trim(), formats, culture, DateTimeStyles.AllowWhiteSpaces, out var result))
+        if (DateTime.TryParseExact(cleaned, formats, culture, DateTimeStyles.AllowWhiteSpaces, out var result))
             return result;
 
-        if (DateTime.TryParse(input.Trim(), culture, DateTimeStyles.AllowWhiteSpaces, out result))
+        if (DateTime.TryParseExact(cleaned, formats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out result))
+            return result;
+
+        if (DateTime.TryParse(cleaned, culture, DateTimeStyles.AllowWhiteSpaces, out result))
+            return result;
+
+        if (DateTime.TryParse(cleaned, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out result))
             return result;
 
         return null;
     }
 
     /// <summary>
-    /// Chuyển chuỗi HH:mm:ss, HH:mm, H:mm:ss hoặc H:mm thành TimeSpan?.
+    /// Chuyển chuỗi giờ (HH:mm:ss, HH:mm, hoặc chuỗi có AM/PM) thành TimeSpan? chuẩn 24h.
     /// </summary>
     public static TimeSpan? ltvStringToTimeSpan(this string? input)
     {
         if (string.IsNullOrWhiteSpace(input))
             return null;
 
+        var cleaned = NormalizeVietnameseMeridiem(input.Trim());
+
         string[] formats = [@"hh\:mm\:ss", @"hh\:mm", @"h\:mm\:ss", @"h\:mm"];
-        if (TimeSpan.TryParseExact(input.Trim(), formats, CultureInfo.InvariantCulture, out var result))
+        if (TimeSpan.TryParseExact(cleaned, formats, CultureInfo.InvariantCulture, out var result))
             return result;
 
-        return TimeSpan.TryParse(input.Trim(), CultureInfo.InvariantCulture, out result)
-            ? result
-            : null;
+        string[] dtTimeFormats = ["hh:mm:ss tt", "h:mm:ss tt", "hh:mm tt", "h:mm tt", "HH:mm:ss", "H:mm:ss", "HH:mm", "H:mm"];
+        if (DateTime.TryParseExact(cleaned, dtTimeFormats, CultureInfo.InvariantCulture, DateTimeStyles.NoCurrentDateDefault, out var dtResult))
+            return dtResult.TimeOfDay;
+
+        if (TimeSpan.TryParse(cleaned, CultureInfo.InvariantCulture, out result))
+            return result;
+
+        if (DateTime.TryParse(cleaned, CultureInfo.InvariantCulture, DateTimeStyles.NoCurrentDateDefault, out dtResult))
+            return dtResult.TimeOfDay;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Chuẩn hóa chuỗi chỉ chứa giờ về đúng định dạng 24h "HH:mm:ss" (không dùng AM/PM).
+    /// </summary>
+    public static string ltvNormalizeTime24h(this string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return string.Empty;
+
+        var ts = input.ltvStringToTimeSpan();
+        if (ts.HasValue)
+        {
+            var totalHours = (int)ts.Value.TotalHours;
+            if (totalHours >= 0 && totalHours < 24 && ts.Value.Days == 0)
+                return $"{ts.Value.Hours:00}:{ts.Value.Minutes:00}:{ts.Value.Seconds:00}";
+            return $"{totalHours:00}:{Math.Abs(ts.Value.Minutes):00}:{Math.Abs(ts.Value.Seconds):00}";
+        }
+
+        return ltvNormalizeDateTimeOrTime24h(input);
+    }
+
+    /// <summary>
+    /// Chuẩn hóa mọi chuỗi ngày/giờ hoặc giờ đơn lẻ về định dạng 24h chuẩn HH:mm:ss (loại bỏ hoàn toàn AM/PM, SA/CH).
+    /// </summary>
+    public static string ltvNormalizeDateTimeOrTime24h(this string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return string.Empty;
+
+        var raw = input.Trim();
+        var cleaned = NormalizeVietnameseMeridiem(raw);
+
+        // 1. Nếu là chuỗi giờ đơn thuần (có hoặc không có AM/PM)
+        string[] pureTimeFormats = ["HH:mm:ss", "H:mm:ss", "HH:mm", "H:mm", "hh:mm:ss tt", "h:mm:ss tt", "hh:mm tt", "h:mm tt"];
+        if (DateTime.TryParseExact(cleaned, pureTimeFormats, CultureInfo.InvariantCulture, DateTimeStyles.NoCurrentDateDefault, out var pureTime))
+        {
+            return pureTime.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+
+        // 2. Nếu là chuỗi "HH:mm:ss - dd/MM/yyyy" hoặc "HH:mm - dd/MM/yyyy" của ALI
+        string[] aliFormats = ["HH:mm:ss - dd/MM/yyyy", "HH:mm - dd/MM/yyyy", "H:mm:ss - dd/MM/yyyy", "H:mm - dd/MM/yyyy", "hh:mm:ss tt - dd/MM/yyyy", "h:mm:ss tt - dd/MM/yyyy", "hh:mm tt - dd/MM/yyyy", "h:mm tt - dd/MM/yyyy"];
+        if (DateTime.TryParseExact(cleaned, aliFormats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var aliDt))
+        {
+            return aliDt.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+
+        // 3. Nếu là chuỗi ngày chỉ có dd/MM/yyyy (không có giờ)
+        string[] dateOnlyFormats = ["dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd", "dd-MM-yyyy"];
+        if (DateTime.TryParseExact(cleaned, dateOnlyFormats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var dateOnly))
+        {
+            return dateOnly.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+        }
+
+        // 4. Nếu toàn bộ chuỗi là một mốc DateTime hợp lệ có cả ngày & giờ
+        var parsedDt = cleaned.ltvStringToDateTime(CultureInfo.InvariantCulture);
+        if (parsedDt.HasValue)
+        {
+            return parsedDt.Value.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+
+        // 5. Trường hợp chuỗi phức hợp (ví dụ: nhiều mốc giờ trên nhiều dòng trong BookingTime của Ali):
+        // Chuyển toàn bộ các cụm giờ có/không có AM/PM bên trong chuỗi về chuẩn 24h HH:mm:ss
+        return Regex.Replace(
+            cleaned,
+            @"\b(?<h>\d{1,2}):(?<m>[0-5]\d)(?::(?<s>[0-5]\d))?(?:\s*(?<tt>AM|PM))?\b",
+            match =>
+            {
+                if (!int.TryParse(match.Groups["h"].Value, out var h))
+                    return match.Value;
+                var m = int.Parse(match.Groups["m"].Value);
+                var s = match.Groups["s"].Success ? int.Parse(match.Groups["s"].Value) : 0;
+                var tt = match.Groups["tt"].Value.ToUpperInvariant();
+
+                if (tt == "PM" && h < 12) h += 12;
+                else if (tt == "AM" && h == 12) h = 0;
+
+                if (h is < 0 or > 23)
+                    return match.Value;
+
+                return $"{h:00}:{m:00}:{s:00}";
+            },
+            RegexOptions.IgnoreCase);
+    }
+
+    private static string NormalizeVietnameseMeridiem(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var res = Regex.Replace(value, @"\bSA\b", "AM", RegexOptions.IgnoreCase);
+        res = Regex.Replace(res, @"\bCH\b", "PM", RegexOptions.IgnoreCase);
+        return res;
     }
 
     /// <summary>
@@ -312,11 +439,8 @@ public static class GoogleSheetExtension
         if (string.IsNullOrWhiteSpace(input))
             return null;
 
-        const string format = "HH:mm:ss - dd/MM/yyyy";
-        return DateTime.TryParseExact(input.Trim(), format, CultureInfo.InvariantCulture,
-            DateTimeStyles.None, out var result)
-            ? result.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture)
-            : null;
+        var normalized = input.ltvNormalizeDateTimeOrTime24h();
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
     }
 
     /// <summary>

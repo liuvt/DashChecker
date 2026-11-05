@@ -1,0 +1,1148 @@
+@page "/link-management"
+@using DashChecker.Models
+@using DashChecker.Servers
+@using DashChecker.Services
+@inject SkySoftLinkService LinkService
+@inject AliService Ali
+@inject AliGgSheetServer AliSheetServer
+@inject AliWorkerService AliWorker
+@inject AppSessionService Session
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>DashChecker - Quản lý Tài khoản Liên kết</PageTitle>
+
+<div class="page-shell link-management-page">
+    <section class="page-header compact-page-header">
+        <div>
+            <div class="eyebrow">HỆ THỐNG • UNIFIED ACCOUNT &amp; API LINK CENTER</div>
+            <h1>Quản lý Tài khoản Liên kết — SkySoft &amp; Ali</h1>
+            <p>
+                Quản lý tập trung toàn bộ liên kết <strong>SkySoft</strong> (Authentication App &amp; API GPS Online đa khu vực) và tài khoản <strong>Ali (admin.nhaxeviet.vn)</strong>.
+                Khi đã đăng nhập tại đây, các màn hình <strong>App Khách Hàng</strong> và <strong>Báo cáo</strong> tự động sử dụng phiên đã kết nối mà không cần đăng nhập lại.
+            </p>
+        </div>
+        <div class="status-group">
+            <span class="area-pill">
+                SkySoft: @_accounts.Count(x => x.IsConnected)/@_accounts.Count · Ali: @(Ali.IsConnected ? "Connected" : "Offline")
+            </span>
+        </div>
+    </section>
+
+    <section class="data-card">
+        <div class="data-toolbar">
+            <div>
+                <h2>Trung tâm Quản lý Tài khoản Liên kết</h2>
+                <p>Mỗi tài khoản trên thanh điều hướng bên trái được đồng bộ trực tiếp từ trạng thái Connect tại trang này.</p>
+            </div>
+            <div class="toolbar-actions">
+                <button class="btn secondary" @onclick="BeginAddAccount" disabled="@_busy">
+                    <span>＋</span><span>Thêm liên kết SkySoft</span>
+                </button>
+                <button class="btn secondary" @onclick="ConnectAllAsync" disabled="@_busy">
+                    <span>⚡</span><span>Kết nối tất cả (SkySoft &amp; Ali)</span>
+                </button>
+                @if (_accounts.Any(x => x.IsConnected) || Ali.IsConnected)
+                {
+                    <button class="btn ghost" @onclick="DisconnectAllAsync" disabled="@_busy">
+                        <span>✕</span><span>Ngắt tất cả</span>
+                    </button>
+                }
+                <button class="btn primary" @onclick="FetchSharedDataAsync" disabled="@_busy">
+                    @if (_fetchingShared)
+                    {
+                        <span class="spinner"></span><span>Đang gọi API các tỉnh...</span>
+                    }
+                    else
+                    {
+                        <span>↻</span><span>Gọi dữ liệu chung SkySoft (@_accounts.Count(x => x.IsConnected) TK)</span>
+                    }
+                </button>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <div class="inline-message success data-message">@_message</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="inline-message error data-message">@_error</div>
+        }
+
+        <div class="kpi-grid link-kpis">
+            <div class="kpi-card revenue">
+                <span>SkySoft Đang Connect</span>
+                <strong>@_accounts.Count(x => x.IsConnected) / @_accounts.Count</strong>
+                <small>@string.Join(", ", _accounts.Select(x => x.AreaCode).Distinct())</small>
+            </div>
+            <div class="kpi-card @(Ali.IsConnected ? "revenue" : "warning")">
+                <span>Tài khoản Ali</span>
+                <strong>@(Ali.IsConnected ? "Connected" : "Offline")</strong>
+                <small>@(string.IsNullOrWhiteSpace(Ali.ConnectedUserName) ? "admin.nhaxeviet.vn" : $"{Ali.ConnectedUserName} · {Ali.CookieCount} cookie")</small>
+            </div>
+            <div class="kpi-card">
+                <span>Tổng xe chung SkySoft</span>
+                <strong>@(_registryPage?.TotalUniqueVehicles.ToString("N0") ?? "0")</strong>
+                <small>Gộp theo Biển số - Số hiệu</small>
+            </div>
+            <div class="kpi-card warning">
+                <span>Xe trùng liên tỉnh</span>
+                <strong>@(_registryPage?.MultiProvinceCount.ToString("N0") ?? "0")</strong>
+                <small>2+ tỉnh cùng trả về 1 xe</small>
+            </div>
+            <div class="kpi-card">
+                <span>Xe sạch / Đã loại bỏ</span>
+                <strong>@(_registryPage?.ActiveCleanCount.ToString("N0") ?? "0") / @(_registryPage?.ExcludedCount.ToString("N0") ?? "0")</strong>
+                <small>Hợp lệ / Bị loại bỏ</small>
+            </div>
+        </div>
+
+        <div class="data-tabs">
+            <button class="data-tab @(_activeTab == "all" ? "active" : "")" @onclick='() => SwitchTabAsync("all")'>
+                Tất cả Liên kết (SkySoft &amp; Ali)
+                <span class="tab-count">@(_accounts.Count + 1)</span>
+            </button>
+            <button class="data-tab @(_activeTab == "skysoft" ? "active" : "")" @onclick='() => SwitchTabAsync("skysoft")'>
+                SkySoft (Toàn bộ liên kết khu vực)
+                <span class="tab-count">@_accounts.Count(x => x.IsConnected)/@_accounts.Count</span>
+            </button>
+            <button class="data-tab @(_activeTab == "ali" ? "active" : "")" @onclick='() => SwitchTabAsync("ali")'>
+                Ali — Module tích hợp (App Khách Hàng)
+                <span class="tab-count">@(Ali.IsConnected ? "ON" : "OFF")</span>
+            </button>
+            <button class="data-tab @(_activeTab == "vehicles" ? "active" : "")" @onclick='() => SwitchTabAsync("vehicles")'>
+                Nhóm Dữ liệu chung (Biển số - Số hiệu)
+                <span class="tab-count">@(_registryPage?.TotalUniqueVehicles ?? 0)</span>
+            </button>
+        </div>
+
+        @if (_activeTab is "all" or "ali" or "skysoft")
+        {
+            <div class="link-accounts-container">
+                @if (_activeTab is "all" or "ali")
+                {
+                    <!-- KHỐI 1: LIÊN KẾT ALI (MODULE TÍCH HỢP ALI - ADMIN.NHAXEVIET.VN) -->
+                    <div class="link-provider-section">
+                        <div class="link-provider-section-head">
+                            <div>
+                                <span class="provider-pill ali">ALI • MODULE TÍCH HỢP</span>
+                                <h3>Liên kết Tài khoản Ali — Hệ thống Điều hành Ali (admin.nhaxeviet.vn)</h3>
+                                <p>Quản lý đăng nhập và trạng thái phiên kết nối tài khoản <strong>Ali</strong> dùng chung cho <strong>Chạy Ali (Hẹn giờ)</strong> và <strong>App Khách Hàng</strong> (9 tỉnh) mà không cần đăng nhập lại ở từng màn hình.</p>
+                            </div>
+                            <div class="link-provider-head-actions">
+                                <button type="button" class="btn secondary compact" @onclick='() => Navigation.NavigateTo("/ali-schedule")'>
+                                    <span>⏱ Mở Chạy Ali (Hẹn giờ)</span>
+                                </button>
+                                <button type="button" class="btn ghost compact" @onclick='() => Navigation.NavigateTo("/app-management/customer-app")'>
+                                    <span>📱 Mở App Khách Hàng</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="link-account-card ali-account-card @(Ali.IsConnected ? "connected" : "disconnected")">
+                            <div class="link-card-head">
+                                <div class="link-area-badge-group">
+                                    <span class="account-area-code link-area-code ali-badge-code">ALI</span>
+                                    <div>
+                                        <div class="link-title-row">
+                                            <strong>Tài khoản Điều hành Ali (admin.nhaxeviet.vn)</strong>
+                                            <span class="active-session-pill ali-pill">Dùng chung cho Chạy Ali &amp; App Khách Hàng</span>
+                                        </div>
+                                        <small>@Ali.StatusMessage</small>
+                                    </div>
+                                </div>
+                                <div class="content-status @(Ali.IsConnected ? "online" : "offline")">
+                                    <span class="status-dot @(Ali.IsConnected ? "pulse" : "")"></span>
+                                    @(Ali.IsConnected ? "Connected" : "Disconnected")
+                                </div>
+                            </div>
+
+                            <div class="link-card-body ali-card-body-grid">
+                                <!-- Cột 1: Thông tin đăng nhập Ali -->
+                                <div class="link-section-box">
+                                    <div class="link-section-title">
+                                        <span>1. Xác thực Tài khoản Ali (admin.nhaxeviet.vn/account/login)</span>
+                                        <span class="config-badge @(!string.IsNullOrWhiteSpace(_aliUser.username) && !string.IsNullOrWhiteSpace(_aliUser.password) ? "ok" : "warn")">
+                                            @(!string.IsNullOrWhiteSpace(_aliUser.username) && !string.IsNullOrWhiteSpace(_aliUser.password) ? "Đã lưu thông tin" : "Chưa nhập đủ")
+                                        </span>
+                                    </div>
+
+                                    <div class="link-form-grid two-cols" style="margin-top:8px">
+                                        <label class="field">
+                                            <span>Tài khoản (Username)</span>
+                                            <input class="grid-input" @bind="_aliUser.username" placeholder="VD: adminrachgia" disabled="@_connectingAli" />
+                                        </label>
+                                        <label class="field">
+                                            <span>Mật khẩu (Password)</span>
+                                            <div class="ALI-pass-wrap">
+                                                <input class="grid-input"
+                                                       type="@(_showAliPassword ? "text" : "password")"
+                                                       @bind="_aliUser.password"
+                                                       placeholder="Nhập mật khẩu Ali..."
+                                                       disabled="@_connectingAli" />
+                                                <button type="button" class="mini-btn" @onclick="() => _showAliPassword = !_showAliPassword">
+                                                    @(_showAliPassword ? "Ẩn" : "Hiện")
+                                                </button>
+                                            </div>
+                                        </label>
+                                    </div>
+
+                                    <div class="link-kv-grid" style="margin-top:10px">
+                                        <div>
+                                            <span>Trạng thái Cookie phiên</span>
+                                            <strong>@(Ali.IsConnected ? $"{Ali.CookieCount} cookie hoạt động ({Ali.FirstCookieName})" : "Chưa có cookie phiên")</strong>
+                                        </div>
+                                        <div>
+                                            <span>Cập nhật lần cuối</span>
+                                            <strong>@(Ali.LastConnectedAt?.ToString("dd/MM/yyyy HH:mm:ss") ?? "—")</strong>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Cột 2: Trạng thái tài khoản & Cấu hình Google Sheet đích -->
+                                <div class="link-section-box">
+                                    <div class="link-section-title">
+                                        <span>2. Trạng thái Liên kết &amp; Google Sheet đích</span>
+                                        <span class="config-badge ok">9 Tỉnh · 7 Bảng SQLite</span>
+                                    </div>
+
+                                    <label class="field" style="margin-top:8px">
+                                        <span>Google Spreadsheet ID đích (Dùng cho Chạy Ali &amp; App Khách Hàng)</span>
+                                        <input class="grid-input" @bind="AliSheetServer.SpreadSheetId" placeholder="1LrZoup8C2JnOmCqB9pzjlU5nKDTy_qgLUEYlKO8moME" />
+                                    </label>
+
+                                    <div class="link-kv-grid" style="margin-top:10px">
+                                        <div>
+                                            <span>Phạm vi tài khoản hỗ trợ</span>
+                                            <strong>Bạc Liêu, Vĩnh Long, Cà Mau, Kiên Giang, Hậu Giang, An Giang, Sóc Trăng, Cần Thơ, Phú Quốc</strong>
+                                        </div>
+                                        <div>
+                                            <span>Trạng thái Chạy Ali (Hẹn giờ)</span>
+                                            <strong>@(AliWorker.IsRunning ? $"Đang bật hẹn giờ ({AliWorker.SelectedPresetKey})" : "Đang dừng (Mở mục Chạy Ali để cấu hình)")</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="link-card-foot">
+                                <div class="link-foot-left">
+                                    <button type="button" class="btn primary compact" @onclick="ConnectAliAsync" disabled="@_busy">
+                                        @if (_connectingAli)
+                                        {
+                                            <span class="spinner"></span><span>Đang xác thực Ali...</span>
+                                        }
+                                        else
+                                        {
+                                            <span>⚡ @(Ali.IsConnected ? "Làm mới phiên (Re-Connect Ali)" : "Connect / Đăng nhập Ali")</span>
+                                        }
+                                    </button>
+
+                                    @if (Ali.IsConnected)
+                                    {
+                                        <button type="button" class="btn secondary compact" @onclick="DisconnectAli" disabled="@_busy">
+                                            <span>✕ Ngắt kết nối Ali</span>
+                                        </button>
+                                    }
+                                </div>
+
+                                <div class="link-foot-right">
+                                    <a class="mini-btn" href="@($"https://docs.google.com/spreadsheets/d/{AliSheetServer.SpreadSheetId}")" target="_blank" rel="noopener noreferrer">
+                                        ↗ Mở Google Sheet Ali
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (_activeTab is "all" or "skysoft")
+                {
+                    <!-- KHỐI 2: TOÀN BỘ CÁC LIÊN KẾT SKYSOFT HIỆN TẠI -->
+                    <div class="link-provider-section">
+                        <div class="link-provider-section-head">
+                            <div>
+                                <span class="provider-pill skysoft">SKYSOFT • MULTI-AREA</span>
+                                <h3>Liên kết Tài khoản &amp; API SkySoft (Toàn bộ các khu vực)</h3>
+                                <p>Quản lý đồng thời <strong>Authentication App (go.skysoft.vn)</strong> và <strong>API GPS Online (data.skysoft.vn)</strong> cho từng tỉnh/khu vực. Bấm chọn làm phiên chính hoặc bấm trực tiếp vào thẻ tài khoản đang kết nối trên thanh điều hướng bên trái để chuyển khu vực.</p>
+                            </div>
+                            <div class="link-provider-head-actions">
+                                <button type="button" class="btn secondary compact" @onclick="BeginAddAccount" disabled="@_busy">
+                                    <span>＋ Thêm khu vực SkySoft</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        @if (_accounts.Count == 0)
+                        {
+                            <div class="empty-state">
+                                <div class="empty-icon">⇄</div>
+                                <strong>Chưa có tài khoản liên kết SkySoft nào</strong>
+                                <span>Bấm “Thêm liên kết SkySoft” để cấu hình API và tài khoản Authentication App.</span>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="link-accounts-grid">
+                                @foreach (var acc in _accounts)
+                                {
+                                    var isBusyThis = _connectingAccountId == acc.Id;
+                                    var isCurrentSessionArea = Session.Area is not null &&
+                                        string.Equals(Session.Area.AreaCode, acc.AreaCode, StringComparison.OrdinalIgnoreCase);
+
+                                    <div class="link-account-card @(acc.IsConnected ? "connected" : "disconnected")">
+                                        <div class="link-card-head">
+                                            <div class="link-area-badge-group">
+                                                <span class="account-area-code link-area-code">@acc.AreaCode</span>
+                                                <div>
+                                                    <div class="link-title-row">
+                                                        <strong>@acc.AreaName</strong>
+                                                        @if (isCurrentSessionArea)
+                                                        {
+                                                            <span class="active-session-pill">Khu vực đang chọn</span>
+                                                        }
+                                                    </div>
+                                                    <small>@acc.LastStatusMessage</small>
+                                                </div>
+                                            </div>
+                                            <div class="content-status @(acc.IsConnected ? "online" : "offline")">
+                                                <span class="status-dot @(acc.IsConnected ? "pulse" : "")"></span>
+                                                @(acc.IsConnected ? "Connected" : "Disconnected")
+                                            </div>
+                                        </div>
+
+                                        <div class="link-card-body">
+                                            <div class="link-section-box">
+                                                <div class="link-section-title">
+                                                    <span>1. Authentication App (go.skysoft.vn)</span>
+                                                    <span class="config-badge @(acc.HasAppCredentials ? "ok" : "warn")">
+                                                        @(acc.HasAppCredentials ? "Đã lưu MK" : "Chưa lưu MK")
+                                                    </span>
+                                                </div>
+                                                <div class="link-kv-grid">
+                                                    <div><span>Username</span><strong>@(string.IsNullOrWhiteSpace(acc.UserName) ? "—" : acc.UserName)</strong></div>
+                                                    <div><span>Thiết bị / OS</span><strong>@acc.DeviceName · @acc.AppOs (v@acc.AppVersion)</strong></div>
+                                                    <div><span>Device Brand</span><strong>@acc.DeviceBrand</strong></div>
+                                                    <div><span>Device ID</span><strong class="mono-truncate" title="@acc.DeviceId">@Shorten(acc.DeviceId, 14)</strong></div>
+                                                </div>
+                                                @if (!acc.HasPassword && !acc.IsConnected && !string.IsNullOrWhiteSpace(acc.UserName))
+                                                {
+                                                    <div class="quick-pwd-row">
+                                                        <input type="password"
+                                                               class="grid-input"
+                                                               placeholder="Nhập mật khẩu SkySoft để Connect..."
+                                                               value="@GetQuickPassword(acc.Id)"
+                                                               @oninput="e => SetQuickPassword(acc.Id, e.Value?.ToString())" />
+                                                    </div>
+                                                }
+                                            </div>
+
+                                            <div class="link-section-box">
+                                                <div class="link-section-title">
+                                                    <span>2. API Liên kết GPS Online (data.skysoft.vn)</span>
+                                                    <span class="config-badge @(acc.HasApiCredentials ? "ok" : "warn")">
+                                                        @(acc.HasApiCredentials ? "Đủ Key & Token" : "Thiếu Key/Token")
+                                                    </span>
+                                                </div>
+                                                <div class="link-kv-grid">
+                                                    <div><span>API Username</span><strong>@(string.IsNullOrWhiteSpace(acc.ApiUserName) ? "—" : acc.ApiUserName)</strong></div>
+                                                    <div><span>API Key</span><strong class="mono-truncate">@MaskSecret(acc.ApiKey)</strong></div>
+                                                    <div><span>Timeout / KM lọc</span><strong>@acc.TimeoutSeconds s · &gt; @acc.MinOccupiedKm.ToString("N2") km</strong></div>
+                                                    <div><span>Lọc trùng liên tỉnh</span><strong>@(acc.FilterCrossProvinceDuplicates ? "Bật (Tự lọc)" : "Tắt")</strong></div>
+                                                </div>
+                                            </div>
+
+                                            @if (!string.IsNullOrWhiteSpace(acc.Notes))
+                                            {
+                                                <div class="link-note-row">Ghi chú: @acc.Notes</div>
+                                            }
+                                        </div>
+
+                                        <div class="link-card-foot">
+                                            <div class="link-foot-left">
+                                                @if (acc.IsConnected)
+                                                {
+                                                    <button class="btn secondary compact" @onclick="() => DisconnectOneAsync(acc)" disabled="@_busy">
+                                                        @if (isBusyThis) { <span class="spinner dark"></span> }
+                                                        <span>Ngắt kết nối</span>
+                                                    </button>
+                                                }
+                                                else
+                                                {
+                                                    <button class="btn primary compact" @onclick="() => ConnectOneAsync(acc)" disabled="@_busy">
+                                                        @if (isBusyThis) { <span class="spinner"></span><span>Đang kết nối...</span> }
+                                                        else { <span>⚡ Connect</span> }
+                                                    </button>
+                                                }
+
+                                                <button class="btn ghost compact" @onclick="() => ActivateAreaSession(acc)" disabled="@_busy" title="Đặt khu vực này làm khu vực làm việc hiện tại">
+                                                    @(isCurrentSessionArea ? "✓ Đang chọn" : "Chọn khu vực làm việc")
+                                                </button>
+                                            </div>
+
+                                            <div class="link-foot-right">
+                                                <button class="mini-btn edit" @onclick="() => BeginEditAccount(acc)" disabled="@_busy">Sửa</button>
+                                                <button class="mini-btn delete" @onclick="() => DeleteAccountAsync(acc)" disabled="@_busy">Xóa</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            @if (_lastFetchSummary is not null && _lastFetchSummary.AccountLogs.Count > 0)
+            {
+                <div class="flow-note">
+                    <strong>Kết quả gọi API gần nhất:</strong>
+                    @foreach (var log in _lastFetchSummary.AccountLogs)
+                    {
+                        <span>• @log</span>
+                    }
+                </div>
+            }
+
+            <div class="grid-tools">
+                <div class="search-box">
+                    <span class="search-icon">⌕</span>
+                    <input @bind="_vehicleSearch" placeholder="Tìm biển số, số hiệu, mã xe, tỉnh nguồn..." disabled="@_busy" />
+                    <select class="grid-input status-input" style="max-width:160px" @bind="_areaFilter" @bind:after="LoadVehiclesFirstPageAsync">
+                        <option value="">Tất cả khu vực</option>
+                        @foreach (var areaItem in _accounts.Select(x => x.AreaCode).Distinct())
+                        {
+                            <option value="@areaItem">Khu vực @areaItem</option>
+                        }
+                    </select>
+                    <select class="grid-input status-input" style="max-width:190px" @bind="_filterMode" @bind:after="LoadVehiclesFirstPageAsync">
+                        <option value="all">Tất cả xe (@(_registryPage?.TotalUniqueVehicles ?? 0))</option>
+                        <option value="duplicates">Trùng nhiều tỉnh (@(_registryPage?.MultiProvinceCount ?? 0))</option>
+                        <option value="active">Đang sử dụng (@(_registryPage?.ActiveCleanCount ?? 0))</option>
+                        <option value="excluded">Đã loại bỏ (@(_registryPage?.ExcludedCount ?? 0))</option>
+                    </select>
+                    <button class="btn secondary compact" @onclick="LoadVehiclesFirstPageAsync" disabled="@_busy">Lọc</button>
+                </div>
+
+                <div class="table-options">
+                    <button class="btn secondary compact" @onclick="DeduplicateAndCleanAsync" disabled="@_busy" title="Gộp các xe trùng Biển số - Số hiệu và loại bỏ thông tin thừa giữa các tỉnh">
+                        <span>✨ Lọc trùng &amp; Dọn dữ liệu thừa</span>
+                    </button>
+                    <button class="btn save compact" @onclick="PushToOnlineCurrentAsync" disabled="@_busy" title="Đẩy danh sách xe sạch đã lọc trùng sang bảng GPS Online (Current)">
+                        <span>⇧ Đồng bộ sang GPS Online</span>
+                    </button>
+                </div>
+            </div>
+
+            @if (_registryPage is null || _registryPage.Rows.Count == 0)
+            {
+                <div class="empty-state">
+                    <div class="empty-icon">⌖</div>
+                    <strong>Chưa có dữ liệu xe trong nhóm gọi chung</strong>
+                    <span>Hãy Connect các tài khoản khu vực SkySoft và bấm “Gọi dữ liệu chung” để tổng hợp và lọc trùng theo Biển số - Số hiệu.</span>
+                </div>
+            }
+            else
+            {
+                <div class="table-frame">
+                    <table class="data-grid online-vehicle-grid">
+                        <thead>
+                            <tr>
+                                <th class="control-col">Thao tác</th>
+                                <th>Biển số - Số hiệu</th>
+                                <th>Số hiệu</th>
+                                <th>Biển số</th>
+                                <th>Khu vực chuẩn</th>
+                                <th>Tỉnh gọi được (Nguồn)</th>
+                                <th>Trạng thái lọc</th>
+                                <th>Tín hiệu GPS</th>
+                                <th>GPS Date</th>
+                                <th>Vehicle Code / ID</th>
+                                <th>Lý do loại bỏ / Ghi chú</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _registryPage.Rows)
+                            {
+                                <tr class="@(row.IsExcluded ? "excluded-vehicle-row" : "")">
+                                    <td class="control-col">
+                                        <div class="row-actions view-actions">
+                                            @if (row.IsExcluded)
+                                            {
+                                                <button class="mini-btn save" @onclick="() => ToggleExcludeAsync(row, false)" disabled="@_busy">Khôi phục</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="mini-btn edit" @onclick="() => ToggleExcludeAsync(row, true)" disabled="@_busy">Loại bỏ</button>
+                                            }
+                                            <button class="mini-btn delete" @onclick="() => DeleteVehicleRowAsync(row)" disabled="@_busy">Xóa</button>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <strong class="composite-key-badge">@row.PlateNo · @(string.IsNullOrWhiteSpace(row.VehicleNo) ? "Chưa có số hiệu" : row.VehicleNo)</strong>
+                                    </td>
+                                    <td><span class="trip-code">@(string.IsNullOrWhiteSpace(row.VehicleNo) ? "—" : row.VehicleNo)</span></td>
+                                    <td><span class="plate-badge">@row.PlateNo</span></td>
+                                    <td>
+                                        <select class="grid-input tiny-input"
+                                                value="@row.PrimaryAreaCode"
+                                                @onchange="e => ChangePrimaryAreaAsync(row, e.Value?.ToString())"
+                                                disabled="@_busy">
+                                            @foreach (var areaItem in _accounts.Select(x => x.AreaCode).Distinct())
+                                            {
+                                                <option value="@areaItem">@areaItem</option>
+                                            }
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <div class="duplicate-stack">
+                                            <strong>@row.SourceAreas</strong>
+                                            @if (row.IsSharedAcrossProvinces)
+                                            {
+                                                <span class="multi-driver-badge">Trùng @row.DuplicateCount tỉnh (đã gộp 1)</span>
+                                            }
+                                        </div>
+                                    </td>
+                                    <td>
+                                        @if (row.IsExcluded)
+                                        {
+                                            <span class="shift-status down">Đã loại bỏ</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="shift-status up">Đang lấy dữ liệu</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @{
+                                            var hasGpsSignal = row.GpsDate.HasValue && row.GpsDate.Value >= VietnamClock.Now.Date.AddHours(5);
+                                        }
+                                        <span class="gps-signal @(hasGpsSignal ? "on" : "off")">
+                                            <span class="status-dot"></span>@(hasGpsSignal ? "Có tín hiệu" : "Mất tín hiệu")
+                                        </span>
+                                    </td>
+                                    <td class="date-cell">@(row.GpsDate?.ToString("dd/MM/yyyy HH:mm:ss") ?? "—")</td>
+                                    <td class="muted-cell">@row.VehicleCode · @row.VehicleId</td>
+                                    <td>@(string.IsNullOrWhiteSpace(row.ExcludeReason) ? "—" : row.ExcludeReason)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="pager">
+                    <span>Trang <strong>@_registryPage.Page</strong> / <strong>@_registryPage.TotalPages</strong> · Hiển thị @_registryPage.Rows.Count / @_registryPage.TotalRows.ToString("N0") xe</span>
+                    <div>
+                        <button class="btn secondary compact" disabled="@(_registryPage.Page <= 1 || _busy)" @onclick="PrevVehiclePageAsync">← Trước</button>
+                        <button class="btn secondary compact" disabled="@(_registryPage.Page >= _registryPage.TotalPages || _busy)" @onclick="NextVehiclePageAsync">Sau →</button>
+                    </div>
+                </div>
+            }
+        }
+    </section>
+</div>
+
+@if (_showEditor)
+{
+    <div class="modal-backdrop" @onclick="CloseEditor">
+        <div class="confirm-dialog link-editor-dialog" @onclick:stopPropagation="true">
+            <div class="confirm-content">
+                <h3>@(_editor.Id.HasValue ? $"Cập nhật liên kết {_editor.AreaName} ({_editor.AreaCode})" : "Thêm liên kết khu vực SkySoft mới")</h3>
+                <p>Cấu hình đồng thời thông tin gọi API GPS Online (`data.skysoft.vn`) và tài khoản Authentication App (`go.skysoft.vn`).</p>
+
+                <div class="link-form-sections">
+                    <div class="link-form-group">
+                        <h4>Thông tin Khu vực</h4>
+                        <div class="link-form-grid two-cols">
+                            <label class="field">
+                                <span>Mã khu vực (AreaCode) *</span>
+                                <input class="grid-input" @bind="_editor.AreaCode" placeholder="VD: BL, VL, RG, CM, CT" />
+                            </label>
+                            <label class="field">
+                                <span>Tên khu vực (AreaName) *</span>
+                                <input class="grid-input" @bind="_editor.AreaName" placeholder="VD: Bạc Liêu, Vĩnh Long..." />
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="link-form-group">
+                        <h4>1. Authentication App (go.skysoft.vn - Báo cáo đồng hồ)</h4>
+                        <div class="link-form-grid three-cols">
+                            <label class="field">
+                                <span>Tài khoản (Username)</span>
+                                <input class="grid-input" @bind="_editor.UserName" placeholder="namthangbl / namthangvl" />
+                            </label>
+                            <label class="field">
+                                <span>Mật khẩu @(_editor.KeepExistingPassword ? "(Để trống nếu giữ nguyên)" : "")</span>
+                                <input class="grid-input" type="password" @bind="_editor.Password" placeholder="Nhập mật khẩu SkySoft..." />
+                            </label>
+                            <label class="field">
+                                <span>Base URL App</span>
+                                <input class="grid-input" @bind="_editor.AppBaseUrl" />
+                            </label>
+                            <label class="field">
+                                <span>Device Name</span>
+                                <input class="grid-input" @bind="_editor.DeviceName" />
+                            </label>
+                            <label class="field">
+                                <span>Device Brand</span>
+                                <input class="grid-input" @bind="_editor.DeviceBrand" />
+                            </label>
+                            <label class="field">
+                                <span>App OS / Version</span>
+                                <div style="display:flex;gap:6px">
+                                    <input class="grid-input" @bind="_editor.AppOs" placeholder="web" />
+                                    <input class="grid-input" @bind="_editor.AppVersion" placeholder="1.0.58" />
+                                </div>
+                            </label>
+                            <label class="field" style="grid-column: 1 / -1">
+                                <span>Device ID (Thông tin phụ định danh phiên)</span>
+                                <input class="grid-input" @bind="_editor.DeviceId" />
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="link-form-group">
+                        <h4>2. API Liên kết (data.skysoft.vn - GPS Online &amp; Cuốc khách)</h4>
+                        <div class="link-form-grid three-cols">
+                            <label class="field">
+                                <span>API Username</span>
+                                <input class="grid-input" @bind="_editor.ApiUserName" placeholder="ntbl_api / ntvl_api" />
+                            </label>
+                            <label class="field">
+                                <span>API Key</span>
+                                <input class="grid-input" @bind="_editor.ApiKey" placeholder="Key tạo chữ ký MD5" />
+                            </label>
+                            <label class="field">
+                                <span>API Token @(_editor.KeepExistingApiToken ? "(Để trống nếu giữ nguyên)" : "")</span>
+                                <input class="grid-input" type="password" @bind="_editor.ApiToken" placeholder="Nhập Token API..." />
+                            </label>
+                            <label class="field">
+                                <span>API Base URL</span>
+                                <input class="grid-input" @bind="_editor.ApiBaseUrl" />
+                            </label>
+                            <label class="field">
+                                <span>Timeout (giây)</span>
+                                <input class="grid-input" type="number" @bind="_editor.TimeoutSeconds" />
+                            </label>
+                            <label class="field">
+                                <span>KM có khách tối thiểu</span>
+                                <input class="grid-input" type="number" step="0.01" @bind="_editor.MinOccupiedKm" />
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="link-form-group">
+                        <div class="link-form-grid two-cols">
+                            <label class="field">
+                                <span>Ghi chú phụ</span>
+                                <input class="grid-input" @bind="_editor.Notes" placeholder="Ghi chú tài khoản / tỉnh..." />
+                            </label>
+                            <label class="remember-box" style="margin-top:20px">
+                                <input type="checkbox" @bind="_editor.FilterCrossProvinceDuplicates" />
+                                <span>Tự động loại bỏ xe trùng của tỉnh khác theo Biển số - Số hiệu</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="confirm-actions">
+                    <button class="btn secondary" @onclick="CloseEditor" disabled="@_savingEditor">Hủy</button>
+                    <button class="btn save" @onclick="SaveEditorAsync" disabled="@_savingEditor">
+                        @if (_savingEditor) { <span class="spinner"></span><span>Đang lưu...</span> }
+                        else { <span>✓ Lưu cấu hình liên kết</span> }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string _activeTab = "all";
+    private IReadOnlyList<SkySoftLinkAccountView> _accounts = [];
+    private SharedVehicleRegistryPage? _registryPage;
+    private SharedVehicleFetchSummary? _lastFetchSummary;
+
+    private AliUser _aliUser = new();
+    private bool _showAliPassword;
+    private bool _connectingAli;
+    private string _selectedPresetKey = "05:05:00";
+
+    private string _vehicleSearch = string.Empty;
+    private string _filterMode = "all";
+    private string _areaFilter = string.Empty;
+    private int _vehiclePage = 1;
+
+    private bool _loading;
+    private bool _fetchingShared;
+    private bool _savingEditor;
+    private bool _showEditor;
+    private int? _connectingAccountId;
+    private SkySoftLinkEditModel _editor = SkySoftLinkEditModel.CreateNew();
+    private readonly Dictionary<int, string> _quickPasswords = new();
+
+    private string? _message;
+    private string? _error;
+
+    private bool _busy => _loading || _fetchingShared || _savingEditor || _connectingAccountId.HasValue || _connectingAli;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _selectedPresetKey = AliWorker.SelectedPresetKey;
+        LinkService.Changed += OnLinkServiceChanged;
+        Ali.AuthChanged += OnAliAuthChanged;
+        AliWorker.StatusChanged += OnWorkerChanged;
+        await ReloadAllAsync();
+    }
+
+    private void OnLinkServiceChanged() => _ = InvokeAsync(async () =>
+    {
+        _accounts = await LinkService.GetAccountsAsync();
+        StateHasChanged();
+    });
+
+    private void OnAliAuthChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnWorkerChanged() => _ = InvokeAsync(() =>
+    {
+        _selectedPresetKey = AliWorker.SelectedPresetKey;
+        StateHasChanged();
+    });
+
+    private void OnPresetTimeChanged(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            _selectedPresetKey = key;
+            AliWorker.SelectPreset(key);
+        }
+    }
+
+    private void StartDailyWorker()
+    {
+        AliWorker.Start(_selectedPresetKey);
+        _message = $"Đã bật hẹn giờ tự động 1 lần/ngày theo mốc {_selectedPresetKey} (chỉ gọi API & lưu vào 7 bảng SQLite cục bộ, không tự ý đẩy Google Sheet).";
+    }
+
+    private void StopDailyWorker()
+    {
+        AliWorker.Stop();
+        _message = "Đã dừng tiến trình hẹn giờ tự động.";
+    }
+
+    private async Task ReloadAllAsync()
+    {
+        _loading = true;
+        try
+        {
+            _accounts = await LinkService.GetAccountsAsync();
+            _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+
+            var aliSchema = await Ali.LoadAuthenticationAsync();
+            if (aliSchema?.User is not null)
+            {
+                _aliUser = new AliUser
+                {
+                    username = aliSchema.User.username,
+                    password = aliSchema.User.password
+                };
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        _activeTab = tab;
+        if (tab == "vehicles")
+        {
+            _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+        }
+    }
+
+    private async Task ConnectAliAsync()
+    {
+        _message = _error = null;
+        _connectingAli = true;
+        try
+        {
+            var ok = await Ali.AuthenticateAsync(_aliUser);
+            if (ok)
+            {
+                _message = $"Đã kết nối thành công tài khoản Ali ({_aliUser.username}) trên admin.nhaxeviet.vn ({Ali.CookieCount} cookie phiên). Các màn hình App Khách Hàng đã sẵn sàng sử dụng.";
+            }
+            else
+            {
+                _error = "Xác thực tài khoản Ali thất bại: Sai tài khoản hoặc mật khẩu trên admin.nhaxeviet.vn.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"Lỗi kết nối Ali: {ex.Message}";
+        }
+        finally
+        {
+            _connectingAli = false;
+        }
+    }
+
+    private void DisconnectAli()
+    {
+        _message = _error = null;
+        Ali.Disconnect();
+        _message = "Đã ngắt kết nối phiên Tài khoản Ali.";
+    }
+
+    private void BeginAddAccount()
+    {
+        _editor = SkySoftLinkEditModel.CreateNew();
+        _showEditor = true;
+        _message = _error = null;
+    }
+
+    private void BeginEditAccount(SkySoftLinkAccountView acc)
+    {
+        _editor = SkySoftLinkEditModel.FromView(acc);
+        _showEditor = true;
+        _message = _error = null;
+    }
+
+    private void CloseEditor()
+    {
+        if (_savingEditor) return;
+        _showEditor = false;
+    }
+
+    private async Task SaveEditorAsync()
+    {
+        _message = _error = null;
+        _savingEditor = true;
+        try
+        {
+            await LinkService.SaveAccountAsync(_editor);
+            _showEditor = false;
+            await ReloadAllAsync();
+            _message = $"Đã lưu cấu hình liên kết khu vực {_editor.AreaName} ({_editor.AreaCode}).";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _savingEditor = false;
+        }
+    }
+
+    private async Task DeleteAccountAsync(SkySoftLinkAccountView acc)
+    {
+        _message = _error = null;
+        try
+        {
+            await LinkService.DeleteAccountAsync(acc.Id);
+            await ReloadAllAsync();
+            _message = $"Đã xóa liên kết {acc.AreaName} ({acc.AreaCode}).";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task ConnectOneAsync(SkySoftLinkAccountView acc)
+    {
+        _message = _error = null;
+        _connectingAccountId = acc.Id;
+        try
+        {
+            var pwdOverride = GetQuickPassword(acc.Id);
+            var connected = await LinkService.ConnectAccountAsync(acc.Id, pwdOverride);
+            _quickPasswords.Remove(acc.Id);
+
+            Session.SetLoggedIn(
+                string.IsNullOrWhiteSpace(connected.UserName) ? connected.ApiUserName : connected.UserName,
+                new AreaContext(
+                    string.IsNullOrWhiteSpace(connected.UserName) ? connected.ApiUserName : connected.UserName,
+                    connected.AreaCode,
+                    connected.AreaName));
+
+            await ReloadAllAsync();
+            _message = $"Đã kết nối thành công {connected.AreaName} ({connected.AreaCode}): {connected.LastStatusMessage}";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _connectingAccountId = null;
+        }
+    }
+
+    private async Task DisconnectOneAsync(SkySoftLinkAccountView acc)
+    {
+        _message = _error = null;
+        _connectingAccountId = acc.Id;
+        try
+        {
+            await LinkService.DisconnectAccountAsync(acc.Id);
+            await ReloadAllAsync();
+            _message = $"Đã ngắt kết nối tài khoản {acc.AreaName} ({acc.AreaCode}).";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _connectingAccountId = null;
+        }
+    }
+
+    private async Task ConnectAllAsync()
+    {
+        _message = _error = null;
+        _loading = true;
+        try
+        {
+            var count = await LinkService.ConnectAllAvailableAsync();
+
+            var aliConnectedMsg = string.Empty;
+            if (!Ali.IsConnected && !string.IsNullOrWhiteSpace(_aliUser.username) && !string.IsNullOrWhiteSpace(_aliUser.password))
+            {
+                try
+                {
+                    if (await Ali.AuthenticateAsync(_aliUser))
+                        aliConnectedMsg = " + Tài khoản Ali";
+                }
+                catch
+                {
+                    // Bỏ qua lỗi phụ khi kết nối nhanh tất cả
+                }
+            }
+            else if (Ali.IsConnected)
+            {
+                aliConnectedMsg = " + Tài khoản Ali (đã kết nối)";
+            }
+
+            await ReloadAllAsync();
+
+            var firstConnected = _accounts.FirstOrDefault(x => x.IsConnected);
+            if (firstConnected is not null && !Session.IsLoggedIn)
+            {
+                Session.SetLoggedIn(
+                    string.IsNullOrWhiteSpace(firstConnected.UserName) ? firstConnected.ApiUserName : firstConnected.UserName,
+                    new AreaContext(
+                        string.IsNullOrWhiteSpace(firstConnected.UserName) ? firstConnected.ApiUserName : firstConnected.UserName,
+                        firstConnected.AreaCode,
+                        firstConnected.AreaName));
+            }
+
+            _message = $"Đã kết nối {count:N0} tài khoản SkySoft{aliConnectedMsg}.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task DisconnectAllAsync()
+    {
+        _message = _error = null;
+        _loading = true;
+        try
+        {
+            await LinkService.DisconnectAllAsync();
+            Ali.Disconnect();
+            await ReloadAllAsync();
+            _message = "Đã ngắt kết nối toàn bộ tài khoản SkySoft và Ali.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ActivateAreaSession(SkySoftLinkAccountView acc)
+    {
+        var user = !string.IsNullOrWhiteSpace(acc.UserName) ? acc.UserName : acc.ApiUserName;
+        Session.SetLoggedIn(user, new AreaContext(user, acc.AreaCode, acc.AreaName));
+        _message = $"Đã chuyển khu vực làm việc sang {acc.AreaName} ({acc.AreaCode}).";
+    }
+
+    private async Task FetchSharedDataAsync()
+    {
+        _message = _error = null;
+        _fetchingShared = true;
+        try
+        {
+            _lastFetchSummary = await LinkService.FetchSharedVehiclesFromConnectedAsync(autoExcludeCrossProvince: true);
+            _activeTab = "vehicles";
+            _vehiclePage = 1;
+            _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+            _message =
+                $"Đã gọi {_lastFetchSummary.ConnectedAccountsCalled:N0} tài khoản đang Connect: " +
+                $"thu về {_lastFetchSummary.RawVehiclesFetched:N0} bản ghi, gộp chuẩn Biển số - Số hiệu còn {_lastFetchSummary.UniqueVehiclesStored:N0} xe " +
+                $"(đã loại bỏ {_lastFetchSummary.CrossProvinceDuplicatesRemoved:N0} bản ghi trùng liên tỉnh).";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _fetchingShared = false;
+        }
+    }
+
+    private async Task DeduplicateAndCleanAsync()
+    {
+        _message = _error = null;
+        _loading = true;
+        try
+        {
+            var (merged, autoExcluded) = await LinkService.DeduplicateAndCleanRegistryAsync();
+            _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+            _message = $"Đã chuẩn hóa theo Biển số - Số hiệu: gộp {merged:N0} dòng trùng, tự động đánh dấu loại bỏ {autoExcluded:N0} xe thừa/ngoài vùng.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task PushToOnlineCurrentAsync()
+    {
+        _message = _error = null;
+        _loading = true;
+        try
+        {
+            var pushed = await LinkService.PushCleanVehiclesToOnlineCurrentAsync(
+                string.IsNullOrWhiteSpace(_areaFilter) ? null : _areaFilter);
+            _message = $"Đã đồng bộ {pushed:N0} xe sạch (đã loại trùng) sang bảng GPS Online Current.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ToggleExcludeAsync(SharedVehicleItemView row, bool exclude)
+    {
+        _message = _error = null;
+        try
+        {
+            await LinkService.ToggleVehicleExcludeAsync(
+                row.Id,
+                exclude,
+                exclude ? "Loại bỏ thông tin trùng/không cần thiết" : null);
+            _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task ChangePrimaryAreaAsync(SharedVehicleItemView row, string? newArea)
+    {
+        if (string.IsNullOrWhiteSpace(newArea)) return;
+        _message = _error = null;
+        try
+        {
+            await LinkService.UpdateVehiclePrimaryAreaAsync(row.Id, newArea);
+            _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+            _message = $"Đã gán xe {row.PlateNo} ({row.VehicleNo}) về khu vực chuẩn {newArea}.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task DeleteVehicleRowAsync(SharedVehicleItemView row)
+    {
+        _message = _error = null;
+        try
+        {
+            await LinkService.DeleteVehicleRegistryRowAsync(row.Id);
+            _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task LoadVehiclesFirstPageAsync()
+    {
+        _vehiclePage = 1;
+        _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+    }
+
+    private async Task PrevVehiclePageAsync()
+    {
+        if (_registryPage is not null && _vehiclePage > 1)
+        {
+            _vehiclePage--;
+            _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+        }
+    }
+
+    private async Task NextVehiclePageAsync()
+    {
+        if (_registryPage is not null && _vehiclePage < _registryPage.TotalPages)
+        {
+            _vehiclePage++;
+            _registryPage = await LinkService.GetSharedVehiclesPageAsync(_vehiclePage, 100, _vehicleSearch, _filterMode, _areaFilter);
+        }
+    }
+
+    private string GetQuickPassword(int id) => _quickPasswords.TryGetValue(id, out var v) ? v : string.Empty;
+    private void SetQuickPassword(int id, string? value) => _quickPasswords[id] = value ?? string.Empty;
+
+    private static string MaskSecret(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        if (value.Length <= 10) return "••••••••";
+        return $"{value[..5]}••••{value[^4..]}";
+    }
+
+    private static string Shorten(string? value, int max)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return value.Length <= max ? value : value[..max] + "…";
+    }
+
+    public void Dispose()
+    {
+        LinkService.Changed -= OnLinkServiceChanged;
+        Ali.AuthChanged -= OnAliAuthChanged;
+        AliWorker.StatusChanged -= OnWorkerChanged;
+    }
+}
+
+
