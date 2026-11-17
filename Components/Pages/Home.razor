@@ -511,7 +511,7 @@
                 return;
             }
 
-            // TaxiTripListItem -> TaxiTripCurrentEditModel.From(row) -> đúng 10 cột F:O.
+            // TaxiTripListItem -> TaxiTripCurrentEditModel.From(row) -> đúng 10 cột A:J.
             var googleRows = rows
                 .Select(row => TaxiTripCurrentEditModel.From(row).ToGoogleSheetValues())
                 .ToList();
@@ -519,7 +519,7 @@
             var result = await GgsChecker.AddRangeAsync(googleRows);
             _message =
                 $"Đã lưu {result.Count:N0} cuốc lên GoogleSheet " +
-                $"BÁO CÁO ĐỒNG HỒ, vùng F{result.StartRow}:O{result.EndRow}.";
+                $"Cuốc Xe Đồng Hồ (Thô), vùng A{result.StartRow}:J{result.EndRow}.";
         }
         catch (Exception ex)
         {

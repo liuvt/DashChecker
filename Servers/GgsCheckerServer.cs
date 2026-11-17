@@ -10,14 +10,14 @@ using Microsoft.Extensions.Options;
 namespace DashChecker.Servers;
 
 /// <summary>
-/// CRUD Google Sheet "BÁO CÁO ĐỒNG HỒ" (vùng F2:O) và "GPS" (vùng A2:H).
+/// CRUD Google Sheet "Cuốc Xe Đồng Hồ (Thô)" (vùng A2:J) và "GPS" (vùng A2:H).
 /// </summary>
 public sealed class GgsCheckerServer : IGgsCheckerServer, IDisposable
 {
     private const int StartRow = 2;
     private const int ColumnCount = 10;
-    private const string StartColumn = "F";
-    private const string EndColumn = "O";
+    private const string StartColumn = "A";
+    private const string EndColumn = "J";
 
     private const int GpsColumnCount = 8;
     private const string GpsStartColumn = "A";
@@ -445,7 +445,7 @@ public sealed class GgsCheckerServer : IGgsCheckerServer, IDisposable
         if (values.Count != ColumnCount)
         {
             throw new ArgumentException(
-                $"BÁO CÁO ĐỒNG HỒ yêu cầu đúng {ColumnCount} giá trị tương ứng F:O.",
+                $"Cuốc Xe Đồng Hồ (Thô) yêu cầu đúng {ColumnCount} giá trị tương ứng A:J.",
                 nameof(values));
         }
     }

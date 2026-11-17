@@ -1,7 +1,7 @@
 namespace DashChecker.Servers.Interfaces;
 
 /// <summary>
-/// CRUD dữ liệu Google Sheet "BÁO CÁO ĐỒNG HỒ" trên vùng F2:O và sheet "GPS" trên vùng A2:H.
+/// CRUD dữ liệu Google Sheet "Cuốc Xe Đồng Hồ (Thô)" trên vùng A2:J và sheet "GPS" trên vùng A2:H.
 /// RowNumber là số dòng thật trên Google Sheet (1-based như giao diện Google Sheets).
 /// </summary>
 public interface IGgsCheckerServer
@@ -9,7 +9,7 @@ public interface IGgsCheckerServer
     Task<List<GgsCheckerRow>> GetsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Thêm một dòng mới bên dưới dòng cuối đang có dữ liệu trong F:O.
+    /// Thêm một dòng mới bên dưới dòng cuối đang có dữ liệu trong A:J.
     /// Không tái sử dụng lỗ trống ở giữa và không ghi đè dữ liệu cũ.
     /// </summary>
     Task<int> AddAsync(
@@ -25,7 +25,7 @@ public interface IGgsCheckerServer
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Sửa đúng vùng F:O tại một dòng cụ thể.
+    /// Sửa đúng vùng A:J tại một dòng cụ thể.
     /// </summary>
     Task<bool> UpdateAsync(
         int rowNumber,
@@ -33,7 +33,7 @@ public interface IGgsCheckerServer
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Clear F:O của dòng, không xóa physical row của Google Sheet.
+    /// Clear A:J của dòng, không xóa physical row của Google Sheet.
     /// </summary>
     Task<bool> DeleteAsync(
         int rowNumber,

@@ -66,9 +66,9 @@ public sealed class TaxiTripCurrentEditModel
     };
 
     /// <summary>
-    /// Map đúng 10 cột Google Sheet BÁO CÁO ĐỒNG HỒ: F..O.
-    /// F Số hiệu, G Biển số, H Bắt đầu, I Kết thúc, J KM có khách,
-    /// K KM rỗng, L Tổng KM, M Thành tiền, N Điểm đầu, O Điểm cuối.
+    /// Map đúng 10 cột Google Sheet Cuốc Xe Đồng Hồ (Thô): A..J.
+    /// A Số hiệu, B Biển số, C Bắt đầu, D Kết thúc, E KM có khách,
+    /// F KM rỗng, G Tổng KM, H Thành tiền, I Điểm đầu, J Điểm cuối.
     /// </summary>
     public IReadOnlyList<object?> ToGoogleSheetValues() => new object?[]
     {
